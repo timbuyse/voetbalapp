@@ -9,7 +9,7 @@
   <meta name="theme-color" content="#101010">
   <link rel="manifest" href="manifest.json">
   <link rel="apple-touch-icon" href="icon.svg">
-  <title>Sparta Petegem Deinze</title>
+  <title>Football Score Tracking App</title>
   <style>
     *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
     :root{
@@ -177,7 +177,7 @@
     .fab{position:fixed;bottom:calc(24px + env(safe-area-inset-bottom));right:24px;width:62px;height:62px;border-radius:31px;background:var(--org);color:#fff;border:none;font-size:30px;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;z-index:50}
     .fab:active{transform:scale(.9)}
     /* Player input row */
-    .pirow{display:grid;grid-template-columns:64px 1fr auto;gap:6px;align-items:center;margin-bottom:6px}
+    .pirow{display:grid;grid-template-columns:56px 1fr 1fr auto;gap:6px;align-items:center;margin-bottom:6px}
     .pirow input,.pirow select{padding:10px;border:2px solid var(--bdr);border-radius:8px;font-size:15px;width:100%;-webkit-appearance:none;background:#fff}
     .pirow2{display:grid;grid-template-columns:1fr 70px;gap:6px;margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid var(--bdr)}
     .pirow2 select,.pirow2 input{padding:9px;border:2px solid var(--bdr);border-radius:8px;font-size:14px;width:100%;-webkit-appearance:none;background:#fff}
@@ -432,6 +432,8 @@ let view = 'home', match = null, tab = 'wedstrijd', timerInt = null;
 
 // ===================== UTILS =====================
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2); }
+function pFirstName(p) { return p.firstName !== undefined ? p.firstName : (p.name || '').split(' ')[0]; }
+function pLastName(p) { return p.lastName !== undefined ? p.lastName : (p.name || '').split(' ').slice(1).join(' '); }
 function fmtTime(ms) {
   const s = Math.floor(Math.max(0,ms) / 1000);
   return `${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;
@@ -593,7 +595,7 @@ function renderPitch(m, players) {
 const views = {
   home: () => {
     loadHome();
-    return `<div class="hdr hdr-home"><img src="${getClubLogo()}" class="hdr-crest" alt="logo"><span class="hdr-clubname">${esc(getClubName())}</span><button class="hdr-gear" onclick="go('settings')" title="Instellingen">⚙</button></div>
+    return `<div class="hdr hdr-home"><img src="${getClubLogo()}" class="hdr-crest" alt="logo"><span class="hdr-clubname">Football Score Tracking App</span><button class="hdr-gear" onclick="go('settings')" title="Instellingen">⚙</button></div>
       <div class="content" id="home-content"><div class="empty"><div class="ei">⏳</div><p>Laden...</p></div></div>
       <div class="credit">App created by <b>Tim Buyse</b></div>
       <button class="fab" onclick="newMatch()">+</button>`;
@@ -834,7 +836,7 @@ function renderTeamsList() {
     <button class="btn btn-green" style="margin-top:8px" onclick="newTeam()">+ Nieuwe ploeg</button>
   </div>`;
 }
-function newTeam() { editingTeam = { id: uid(), name: '', players: [], isNew: true }; go('teamEdit'); }
+function newTeam() { editingTeam = { id: uid(), name: '', responsible: '', trainers: [], players: [], isNew: true }; go('teamEdit'); }
 function openTeam(id) { const t = teamById(id); if (!t) return; editingTeam = JSON.parse(JSON.stringify(t)); go('teamEdit'); }
 function closeTeamEdit() { editingTeam = null; go('teams'); }
 function renderTeamEdit() {
@@ -843,16 +845,28 @@ function renderTeamEdit() {
   const rows = editingTeam.players.map((p, i) => `
     <div class="pirow">
       <input type="number" placeholder="Rugnr" value="${esc(p.number)}" onchange="editingTeam.players[${i}].number=this.value" inputmode="numeric" aria-label="Rugnummer">
-      <input type="text" placeholder="Naam" value="${esc(p.name)}" onchange="editingTeam.players[${i}].name=this.value">
+      <input type="text" placeholder="Voornaam" value="${esc(pFirstName(p))}" oninput="editingTeam.players[${i}].firstName=this.value" autocomplete="off">
+      <input type="text" placeholder="Familienaam" value="${esc(pLastName(p))}" oninput="editingTeam.players[${i}].lastName=this.value" autocomplete="off">
       <button class="delbtn" onclick="teamDelPlayer(${i})">×</button>
     </div>
     <div class="pirow2" style="grid-template-columns:1fr;margin-bottom:12px">
       <select onchange="editingTeam.players[${i}].pos=this.value"><option value="">Voorkeurspositie…</option>${lines.map(l => `<option ${p.pos===l?'selected':''}>${l}</option>`).join('')}</select>
     </div>`).join('');
-  const colHead = `<div style="display:grid;grid-template-columns:64px 1fr 38px;gap:6px;font-size:11px;font-weight:700;color:var(--txt2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px"><span>Rugnummer</span><span>Naam</span><span></span></div>`;
+  const colHead = `<div style="display:grid;grid-template-columns:56px 1fr 1fr 38px;gap:6px;font-size:11px;font-weight:700;color:var(--txt2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px"><span>Rugnr</span><span>Voornaam</span><span>Familienaam</span><span></span></div>`;
+  const trainers = editingTeam.trainers || [];
+  const trainerRows = [0, 1, 2].map(i => {
+    const t = trainers[i] || { name: '' };
+    return `<div class="fg" style="margin-bottom:8px"><label>Trainer ${i+1}${i > 0 ? ' (optioneel)' : ''}</label>
+      <input type="text" placeholder="Naam trainer" value="${esc(t.name)}" oninput="setTrainer(${i},this.value)" autocomplete="off"></div>`;
+  }).join('');
   return `<div class="hdr"><button class="back" onclick="closeTeamEdit()">‹</button><h1>Ploeg bewerken</h1></div>
   <div class="content">
-    <div class="card"><div class="fg"><label>Ploegnaam</label><input id="t-name" value="${esc(editingTeam.name)}" oninput="editingTeam.name=this.value" placeholder="bv. U10IP" autocomplete="off"></div></div>
+    <div class="card">
+      <div class="fg"><label>Ploegnaam</label><input id="t-name" value="${esc(editingTeam.name)}" oninput="editingTeam.name=this.value" placeholder="bv. U10IP" autocomplete="off"></div>
+      <div class="fg" style="margin-bottom:0"><label>Ploegverantwoordelijke (optioneel)</label><input type="text" placeholder="Naam ploegverantwoordelijke" value="${esc(editingTeam.responsible||'')}" oninput="editingTeam.responsible=this.value" autocomplete="off"></div>
+    </div>
+    <div class="sec">Trainers</div>
+    <div class="card">${trainerRows}</div>
     <div class="sec">Spelers (${editingTeam.players.length})</div>
     <div class="card">${editingTeam.players.length ? colHead : ''}<div id="t-rows">${rows || '<p style="color:var(--txt2);font-size:13px;text-align:center;padding:6px 0">Nog geen spelers.</p>'}</div>
       <button class="btn btn-pale" style="margin-top:8px" onclick="teamAddPlayer()">+ Speler toevoegen</button></div>
@@ -860,11 +874,21 @@ function renderTeamEdit() {
     ${editingTeam.isNew ? '' : `<div class="danger"><button class="btn btn-red" onclick="deleteTeamConfirm()">🗑 Ploeg verwijderen</button></div>`}
   </div>`;
 }
-function teamAddPlayer() { editingTeam.players.push({ id: uid(), name: '', number: String(editingTeam.players.length + 1), pos: '' }); render(); }
+function teamAddPlayer() { editingTeam.players.push({ id: uid(), firstName: '', lastName: '', name: '', number: String(editingTeam.players.length + 1), pos: '' }); render(); }
 function teamDelPlayer(i) { editingTeam.players.splice(i, 1); render(); }
 function saveTeamEdit() {
   if (!editingTeam.name.trim()) { alert('Geef de ploeg een naam.'); return; }
-  const clean = { id: editingTeam.id, name: editingTeam.name.trim(), players: editingTeam.players.filter(p => (p.name || '').trim()).map(p => ({ id: p.id, name: p.name.trim(), number: p.number || '', pos: p.pos || '' })) };
+  const clean = {
+    id: editingTeam.id,
+    name: editingTeam.name.trim(),
+    responsible: (editingTeam.responsible || '').trim(),
+    trainers: (editingTeam.trainers || []).map(t => ({ id: t.id || uid(), name: (t.name || '').trim() })).filter(t => t.name),
+    players: editingTeam.players.filter(p => (pFirstName(p) || pLastName(p) || '').trim()).map(p => {
+      const fn = ((p.firstName !== undefined ? p.firstName : pFirstName(p)) || '').trim();
+      const ln = ((p.lastName !== undefined ? p.lastName : pLastName(p)) || '').trim();
+      return { id: p.id, firstName: fn, lastName: ln, name: (fn + ' ' + ln).trim() || p.name || '', number: p.number || '', pos: p.pos || '' };
+    })
+  };
   const arr = getTeamsV2(); const idx = arr.findIndex(t => t.id === clean.id);
   if (idx >= 0) arr[idx] = clean; else arr.push(clean);
   saveTeamsV2(arr); editingTeam = null; go('teams');
@@ -875,19 +899,46 @@ function deleteTeamConfirm() {
     <button class="btn btn-gray" style="margin-top:8px" onclick="closeModal()">Annuleren</button>`);
 }
 function doDeleteTeam() { saveTeamsV2(getTeamsV2().filter(t => t.id !== editingTeam.id)); editingTeam = null; closeModal(); go('teams'); }
+function setTrainer(i, val) {
+  if (!editingTeam.trainers) editingTeam.trainers = [];
+  while (editingTeam.trainers.length <= i) editingTeam.trainers.push({ id: uid(), name: '' });
+  editingTeam.trainers[i].name = val;
+}
 
 // ===================== NIEUWE WEDSTRIJD (WIZARD) =====================
 let wiz = null;
 function startWizard() {
   const now = new Date();
+  const team = getTeamsV2()[0] || null;
+  const teamTrainers = team ? (team.trainers || []).filter(t => t.name) : [];
   wiz = {
-    step: 1, teamId: (getTeamsV2()[0] || {}).id || '', opponent: '',
+    step: 1, teamId: (team || {}).id || '', opponent: '',
     date: now.toISOString().split('T')[0],
     time: `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`,
     location: 'Thuis', matchType: '8v8', periodKey: 'kwarten', quarterDuration: 15,
     competition: 'Competitie', matchday: '', referee: '', jersey: '', weather: '',
+    trainer: teamTrainers.length ? teamTrainers[0].name : '',
+    responsible: team ? (team.responsible || '') : '',
+    trainerIsOther: false,
     pool: [], poolTeamId: null, formationIndex: 0, selPlace: null,
   };
+}
+function wizTeamChange() {
+  captureStep1();
+  const team = teamById(wiz.teamId);
+  if (team) {
+    const trainers = (team.trainers || []).filter(t => t.name);
+    wiz.trainer = trainers.length ? trainers[0].name : '';
+    wiz.trainerIsOther = false;
+    wiz.responsible = team.responsible || '';
+  }
+  render();
+}
+function wizTrainerSelChange(val) {
+  wiz.trainerIsOther = val === '_other';
+  if (!wiz.trainerIsOther) wiz.trainer = val;
+  const fg = document.getElementById('n-trainer-other-fg');
+  if (fg) fg.style.display = wiz.trainerIsOther ? '' : 'none';
 }
 function onPeriodChange() {
   const pt = document.getElementById('n-pt').value;
@@ -916,8 +967,11 @@ function renderNew() {
 function wizStep1() {
   const teams = getTeamsV2();
   const teamSel = teams.length
-    ? `<select id="n-team-sel">${teams.map(t => `<option value="${t.id}" ${wiz.teamId===t.id?'selected':''}>${esc(t.name)} (${t.players.length})</option>`).join('')}</select>`
+    ? `<select id="n-team-sel" onchange="wizTeamChange()">${teams.map(t => `<option value="${t.id}" ${wiz.teamId===t.id?'selected':''}>${esc(t.name)} (${t.players.length})</option>`).join('')}</select>`
     : `<div style="font-size:14px;color:var(--txt2);padding:6px 0">Nog geen ploegen. <a onclick="go('teams')" style="color:var(--grn);font-weight:700;cursor:pointer">Maak eerst een ploeg aan →</a></div>`;
+  const selectedTeam = teamById(wiz.teamId) || (teams.length ? teams[0] : null);
+  const teamTrainers = selectedTeam ? (selectedTeam.trainers || []).filter(t => t.name) : [];
+  const trainerOpts = teamTrainers.map(t => `<option value="${esc(t.name)}" ${!wiz.trainerIsOther&&wiz.trainer===t.name?'selected':''}>${esc(t.name)}</option>`).join('');
   const durOpts = (DURATIONS[wiz.periodKey] || [15]).map(v => `<option value="${v}" ${v===wiz.quarterDuration?'selected':''}>${v} min</option>`).join('');
   return `
     <div class="card">
@@ -951,6 +1005,18 @@ function wizStep1() {
         </div>
         <div class="fg"><label>Scheidsrechter</label><input id="n-ref" type="text" value="${esc(wiz.referee)}" placeholder="Naam"></div>
         <div class="fg"><label>Weer / veld</label><input id="n-weather" type="text" value="${esc(wiz.weather)}" placeholder="bv. droog, kunstgras"></div>
+        <div class="fg"><label>Trainer</label>
+          <select id="n-trainer-sel" onchange="wizTrainerSelChange(this.value)">
+            ${trainerOpts}
+            <option value="_other" ${wiz.trainerIsOther?'selected':''}>Andere trainer…</option>
+          </select></div>
+        <div class="fg" id="n-trainer-other-fg" style="${wiz.trainerIsOther?'':'display:none'}">
+          <label>Naam trainer</label>
+          <input id="n-trainer-other" type="text" value="${esc(wiz.trainer||'')}" placeholder="Naam trainer" autocomplete="off">
+        </div>
+        <div class="fg"><label>Ploegverantwoordelijke</label>
+          <input id="n-responsible" type="text" value="${esc(wiz.responsible||'')}" placeholder="Naam (optioneel)" autocomplete="off">
+        </div>
       </details>
     </div>
     <button class="btn btn-green" onclick="wizNext()">Volgende → Selectie</button>`;
@@ -964,6 +1030,11 @@ function captureStep1() {
   wiz.periodKey = v('n-pt') || wiz.periodKey; wiz.quarterDuration = parseInt(v('n-qd')) || wiz.quarterDuration;
   wiz.competition = v('n-comp'); wiz.matchday = (v('n-md') || '').trim(); wiz.referee = (v('n-ref') || '').trim();
   wiz.jersey = (v('n-jersey') || '').trim(); wiz.weather = (v('n-weather') || '').trim();
+  const trainerSel = document.getElementById('n-trainer-sel');
+  if (trainerSel) { wiz.trainerIsOther = trainerSel.value === '_other'; if (!wiz.trainerIsOther) wiz.trainer = trainerSel.value; }
+  const trainerOther = document.getElementById('n-trainer-other');
+  if (wiz.trainerIsOther && trainerOther) wiz.trainer = trainerOther.value.trim();
+  wiz.responsible = (v('n-responsible') || '').trim();
 }
 function buildPool() {
   const team = teamById(wiz.teamId);
@@ -1105,6 +1176,7 @@ async function finishWizard(startNow) {
   const common = {
     teamName: team ? team.name : (wiz.teamNameFallback || 'Ploeg'), formation: form.name,
     competition: wiz.competition, matchday: wiz.matchday, referee: wiz.referee, jersey: wiz.jersey, weather: wiz.weather,
+    trainer: wiz.trainer || '', responsible: wiz.responsible || '',
     opponent: wiz.opponent, date: wiz.date, time: wiz.time, location: wiz.location,
     matchType: wiz.matchType, fieldSize: MATCH_TYPES[wiz.matchType].field,
     periodKey: wiz.periodKey, numQuarters: PERIOD_TYPES[wiz.periodKey].count, quarterDuration: wiz.quarterDuration,
@@ -1132,6 +1204,7 @@ function editMatchWizard(m) {
     teamId: team ? team.id : '', opponent: m.opponent, date: m.date, time: m.time, location: m.location,
     matchType: m.matchType, periodKey: m.periodKey, quarterDuration: m.quarterDuration,
     competition: m.competition || 'Competitie', matchday: m.matchday || '', referee: m.referee || '', jersey: m.jersey || '', weather: m.weather || '',
+    trainer: m.trainer || '', responsible: m.responsible || '', trainerIsOther: false,
     pool: m.players.map(p => ({ pid: uid(), srcId: null, name: p.name, number: p.number || '', pos: p.line || '', fromName: m.teamName, guest: false, sel: p.starting ? 'basis' : 'bank', slot: null, _x: p.x, _y: p.y })),
     formationIndex: fi, selPlace: null,
   };
@@ -1146,7 +1219,7 @@ function renderPrep() {
   const m = match;
   if (!m) return '<div class="content"><p>Niet gevonden.</p></div>';
   const starters = m.players.filter(p => p.starting), bench = m.players.filter(p => !p.starting);
-  const info = [['Formatie', m.formation], ['Soort', m.competition], ['Speeldag', m.matchday], ['Scheidsrechter', m.referee], ['Truitkleur', m.jersey], ['Weer / veld', m.weather]].filter(([k, v]) => v);
+  const info = [['Formatie', m.formation], ['Trainer', m.trainer], ['Ploegverantwoordelijke', m.responsible], ['Soort', m.competition], ['Speeldag', m.matchday], ['Scheidsrechter', m.referee], ['Truitkleur', m.jersey], ['Weer / veld', m.weather]].filter(([k, v]) => v);
   return `
   <div class="hdr"><button class="back" onclick="go('home')">‹</button>
     <div><h1>${esc(tName(m))} vs ${esc(m.opponent)}</h1><div class="hdr-sub">🗓 Gepland · ${m.location} · ${matchWhen(m)} · ${m.matchType}</div></div>
@@ -1591,7 +1664,7 @@ function renderDetail() {
     </div>
     <div class="sec">Wedstrijdinfo</div>
     <div class="card">
-      ${[['Formatie',match.formation],['Soort',match.competition],['Speeldag',match.matchday],['Scheidsrechter',match.referee],['Truitkleur',match.jersey],['Weer / veld',match.weather],['Kapitein',match.captainId?pName(match,match.captainId):'']].filter(([k,v])=>v).map(([k,v])=>`<div class="stat-row"><span style="color:var(--txt2);min-width:120px">${k}</span><span style="font-weight:600">${esc(v)}</span></div>`).join('') || '<p style="color:var(--txt2);font-size:14px">Geen extra info ingevuld.</p>'}
+      ${[['Formatie',match.formation],['Trainer',match.trainer],['Ploegverantwoordelijke',match.responsible],['Soort',match.competition],['Speeldag',match.matchday],['Scheidsrechter',match.referee],['Truitkleur',match.jersey],['Weer / veld',match.weather],['Kapitein',match.captainId?pName(match,match.captainId):'']].filter(([k,v])=>v).map(([k,v])=>`<div class="stat-row"><span style="color:var(--txt2);min-width:120px">${k}</span><span style="font-weight:600">${esc(v)}</span></div>`).join('') || '<p style="color:var(--txt2);font-size:14px">Geen extra info ingevuld.</p>'}
       <div class="stat-row"><span style="color:var(--txt2);min-width:120px">⭐ Man v/d match</span><span style="font-weight:600">${match.motmId?esc(pName(match,match.motmId)):'—'}</span><button class="btn btn-pale btn-sm no-print" style="margin-left:auto;width:auto" onclick="modalMotm()">Kiezen</button></div>
     </div>
     <div class="sec">Notities</div>
