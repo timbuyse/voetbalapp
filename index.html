@@ -140,6 +140,7 @@
     .evtbtn.efk{border-color:var(--bdr);background:#fff}
     .evtbtn.disabled{opacity:.35;pointer-events:none}
     /* Player row */
+    .pn-inp{width:40px;height:34px;border:2px solid var(--bdr);border-radius:8px;font-size:14px;font-weight:700;text-align:center;padding:0 2px;-webkit-appearance:none;background:#fff;flex-shrink:0;color:var(--txt)}
     .prow{display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid var(--bdr)}
     .prow:last-child{border-bottom:none}
     .pnum{width:34px;height:34px;border-radius:50%;background:var(--blk);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:14px;flex-shrink:0}
@@ -1064,13 +1065,14 @@ function setSel(pid, val) {
 }
 function selRow(p) {
   return `<div class="selrow">
-    <div class="pn">${p.number || '?'}</div>
+    <input type="number" class="pn-inp" value="${esc(p.number)}" placeholder="?" onchange="setPoolNum('${p.pid}',this.value)" inputmode="numeric" aria-label="Rugnummer">
     <div class="nm">${esc(p.name)}${p.guest ? '<span class="guest-badge">gast</span>' : ''}<small>${p.pos || '—'}</small></div>
     <div class="seg">
       <button class="${p.sel==='basis'?'basis':''}" onclick="setSel('${p.pid}','basis')">Basis</button>
       <button class="${p.sel==='bank'?'bank':''}" onclick="setSel('${p.pid}','bank')">Bank</button>
     </div></div>`;
 }
+function setPoolNum(pid, val) { const p = wiz.pool.find(x => x.pid === pid); if (p) p.number = val; }
 function wizStep2() {
   const own = wiz.pool.filter(p => !p.guest), guests = wiz.pool.filter(p => p.guest);
   const team = teamById(wiz.teamId);
@@ -1349,9 +1351,10 @@ function renderLive() {
       <button class="btn btn-orgpale" onclick="modalEditPlayers()">✏️ Spelers bewerken</button>`;
   } else {
     const evts = [...match.events].reverse();
-    tabContent = evts.length
+    tabContent = (evts.length
       ? `<div class="card"><ul class="elog">${evts.map(e => `<li><span class="emin">${pAbbr(match)}${e.quarterNum||'?'} ${gameMin(e.gameTimeMs)}'</span><span class="etxt">${evtLabel(e, match)}</span>${e.type.startsWith('quarter')?'':`<button class="evt-del" onclick="confirmDeleteEvent('${e.id}')" title="Verwijderen">×</button>`}</li>`).join('')}</ul></div>`
-      : `<div class="empty"><div class="ei">📋</div><p>Nog geen events.</p></div>`;
+      : `<div class="empty"><div class="ei">📋</div><p>Nog geen events.</p></div>`)
+      + `<button class="btn btn-pale" style="margin-top:4px" onclick="modalEditMatchInfo()">📋 Wedstrijdinfo bewerken</button>`;
   }
 
   return `
@@ -1436,6 +1439,29 @@ function modalNotes() {
     <div class="fg"><textarea id="note-area" rows="6" placeholder="Aanvullingen over de wedstrijd...">${esc(match.notes||'')}</textarea></div>
     <button class="btn btn-green" onclick="saveNotes()">✓ Opslaan</button>
     <button class="btn btn-gray" style="margin-top:8px" onclick="closeModal()">Annuleren</button>`);
+}
+function modalEditMatchInfo() {
+  openModal(`<h3>✏️ Wedstrijdinfo bewerken</h3>
+    <div class="fg"><label>Trainer</label><input id="ei-trainer" type="text" value="${esc(match.trainer||'')}" placeholder="Naam trainer" autocomplete="off"></div>
+    <div class="fg"><label>Ploegverantwoordelijke</label><input id="ei-responsible" type="text" value="${esc(match.responsible||'')}" placeholder="Naam" autocomplete="off"></div>
+    <div class="fg"><label>Scheidsrechter</label><input id="ei-ref" type="text" value="${esc(match.referee||'')}" placeholder="Naam" autocomplete="off"></div>
+    <div class="fg"><label>Soort</label><select id="ei-comp">${['Competitie','Vriendschappelijk','Beker','Tornooi'].map(c=>`<option ${(match.competition||'')=== c?'selected':''}>${c}</option>`).join('')}</select></div>
+    <div class="fg"><label>Speeldag</label><input id="ei-md" type="text" value="${esc(match.matchday||'')}" placeholder="bv. 5" autocomplete="off"></div>
+    <div class="fg"><label>Truitkleur</label><input id="ei-jersey" type="text" value="${esc(match.jersey||'')}" placeholder="bv. zwart-groen" autocomplete="off"></div>
+    <div class="fg"><label>Weer / veld</label><input id="ei-weather" type="text" value="${esc(match.weather||'')}" placeholder="bv. droog, kunstgras" autocomplete="off"></div>
+    <button class="btn btn-green" onclick="saveMatchInfo()">✓ Opslaan</button>
+    <button class="btn btn-gray" style="margin-top:8px" onclick="closeModal()">Annuleren</button>`);
+}
+async function saveMatchInfo() {
+  const v = id => { const e = document.getElementById(id); return e ? e.value : ''; };
+  match.trainer = v('ei-trainer').trim();
+  match.responsible = v('ei-responsible').trim();
+  match.referee = v('ei-ref').trim();
+  match.competition = v('ei-comp');
+  match.matchday = v('ei-md').trim();
+  match.jersey = v('ei-jersey').trim();
+  match.weather = v('ei-weather').trim();
+  await dbSave(match); closeModal(); render();
 }
 async function saveNotes() {
   const t = document.getElementById('note-area');
@@ -1680,7 +1706,10 @@ function renderDetail() {
     <div class="sec">Events (${match.events.length})</div>
     <div class="card">${evts.length ? `<ul class="elog">${evts.map(e=>`<li><span class="emin">${pAbbr(match)}${e.quarterNum||'?'} ${gameMin(e.gameTimeMs)}'</span><span class="etxt">${evtLabel(e,match)}</span>${e.type.startsWith('quarter')?'':`<button class="evt-del no-print" onclick="confirmDeleteEvent('${e.id}')" title="Verwijderen">×</button>`}</li>`).join('')}</ul>` : '<p style="color:var(--txt2);font-size:14px">Geen events.</p>'}</div>
     <div class="no-print">
-      <button class="btn btn-orgpale" onclick="modalEditPlayers()">✏️ Spelers bewerken</button>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
+        <button class="btn btn-orgpale" onclick="modalEditPlayers()">✏️ Spelers bewerken</button>
+        <button class="btn btn-pale" onclick="modalEditMatchInfo()">📋 Info bewerken</button>
+      </div>
       <div class="danger"><button class="btn btn-red" onclick="confirmDelete()">🗑 Wedstrijd verwijderen</button></div>
     </div>
   </div>`;
