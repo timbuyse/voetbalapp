@@ -1712,7 +1712,22 @@ async function confirmInjury() {
   const leavesField = !!document.getElementById('inj-off')?.checked;
   addEvent('injury', { playerId: injPlayerId, injuryType: injType, leavesField });
   if (leavesField) { const p = match.players.find(x => x.id === injPlayerId); if (p) p.onField = false; }
-  await dbSave(match); closeModal(); render();
+  await dbSave(match);
+  if (leavesField) { modalSubAfterInjury(injPlayerId); } else { closeModal(); render(); }
+}
+function modalSubAfterInjury(outId) {
+  subOut = outId; subIn = null;
+  const outPlayer = match.players.find(p => p.id === outId);
+  const mins = calcMinutes(match);
+  const off = playersOnBench(match).slice().sort((a,b) => (mins[a.id]?.ms||0) - (mins[b.id]?.ms||0));
+  const minMs = off.length ? (mins[off[0].id]?.ms||0) : 0;
+  const mm = id => Math.floor((mins[id]?.ms||0)/60000);
+  openModal(`<h3>🔄 Wissel na blessure</h3>
+    <div style="background:var(--rdp);color:var(--rd);border-radius:8px;padding:10px 12px;margin-bottom:12px;font-weight:700;font-size:14px">🤕 ${esc(outPlayer?.name||'?')} verlaat het veld</div>
+    <div class="sec" style="margin-top:0">Wie komt ERIN? <span style="color:var(--txt2);font-weight:400;text-transform:none">(minst gespeeld bovenaan)</span></div>
+    <div id="sub-in">${off.length ? off.map(p => { const low=(mins[p.id]?.ms||0)===minMs; return `<div class="mopt" onclick="selectSubIn('${p.id}',this)"><div class="mopt-num mopt-num-off">${p.number||'?'}</div>${esc(p.name)} ${low?'<span style="color:var(--org);font-size:12px;font-weight:700">💤 minst</span>':''}<span class="${low?'pmins-low':''}" style="color:var(--txt2);font-size:13px;margin-left:auto">${mm(p.id)}'</span></div>`; }).join('') : '<p style="color:var(--txt2);font-size:14px;padding:8px 0">Geen bankspelers beschikbaar.</p>'}</div>
+    <button class="btn btn-green" style="margin-top:12px" onclick="confirmSub()">✓ Wissel doorvoeren</button>
+    <button class="btn btn-gray" style="margin-top:8px" onclick="closeModal();render()">Geen wissel</button>`);
 }
 
 // ===================== MODAL: FREE KICK =====================
