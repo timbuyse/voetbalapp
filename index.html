@@ -224,8 +224,8 @@
     .pslot-lbl{position:absolute;top:38px;left:50%;transform:translateX(-50%);font-size:10px;font-weight:700;color:#fff;white-space:nowrap;text-shadow:0 1px 2px rgba(0,0,0,.7);max-width:74px;overflow:hidden;text-overflow:ellipsis}
     /* Pitch (visual field) */
     .pitch{position:relative;width:100%;max-width:340px;margin:0 auto;aspect-ratio:2/3;background:linear-gradient(#1c8a46,#23a653);border-radius:12px;border:3px solid #fff;overflow:hidden;box-shadow:var(--shadow)}
-    .pitch::before{content:'';position:absolute;top:50%;left:0;right:0;height:2px;background:rgba(255,255,255,.45)}
-    .pitch::after{content:'';position:absolute;top:50%;left:50%;width:60px;height:60px;border:2px solid rgba(255,255,255,.45);border-radius:50%;transform:translate(-50%,-50%)}
+    .pitch::before{content:'';position:absolute;top:50%;left:0;right:0;height:2px;background:rgba(255,255,255,.45);pointer-events:none}
+    .pitch::after{content:'';position:absolute;top:50%;left:50%;width:60px;height:60px;border:2px solid rgba(255,255,255,.45);border-radius:50%;transform:translate(-50%,-50%);pointer-events:none}
     .pitch-box{position:absolute;left:50%;transform:translateX(-50%);width:46%;height:13%;border:2px solid rgba(255,255,255,.45);border-top:none}
     .pitch-box.top{top:0;border-top:2px solid rgba(255,255,255,.45);border-bottom:none}
     .pdot{position:absolute;transform:translate(-50%,-50%);width:38px;height:38px;border-radius:50%;background:var(--blk);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:14px;border:2px solid #fff;box-shadow:0 2px 5px rgba(0,0,0,.4)}
