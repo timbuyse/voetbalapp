@@ -138,6 +138,15 @@
     .evtbtn.ered{border-color:#fca5a5;background:var(--rdp)}
     .evtbtn.epen{border-color:var(--grnb);background:#fff}
     .evtbtn.efk{border-color:var(--bdr);background:#fff}
+    .evtbtn.einj{border-color:#d8b4fe;background:#faf5ff}
+    .seg button.absent{background:var(--rd);color:#fff}
+    .today-banner{background:var(--blk);color:#fff;border-radius:12px;padding:14px 16px;margin-bottom:14px;border-left:5px solid var(--org)}
+    .today-banner h3{font-size:14px;font-weight:700;color:var(--org);margin-bottom:10px;text-transform:uppercase;letter-spacing:.5px}
+    .today-match{display:flex;align-items:center;gap:12px;padding:10px 0;border-top:1px solid rgba(255,255,255,.1)}
+    .today-match:first-of-type{padding-top:0;border-top:none}
+    .today-match .tm-info{flex:1}
+    .today-match .tm-opp{font-size:15px;font-weight:700}
+    .today-match .tm-sub{font-size:12px;opacity:.7;margin-top:2px}
     .evtbtn.disabled{opacity:.35;pointer-events:none}
     /* Player row */
     .pn-inp{width:40px;height:34px;border:2px solid var(--bdr);border-radius:8px;font-size:14px;font-weight:700;text-align:center;padding:0 2px;-webkit-appearance:none;background:#fff;flex-shrink:0;color:var(--txt)}
@@ -495,6 +504,7 @@ function evtLabel(e, m) {
     case 'penalty_them': return `🎯 Penalty tegen${e.scored===true?' — tegendoel':e.scored===false?' — gemist':''}`;
     case 'freekick_us': return `⚡ Vrije trap voor ons`;
     case 'freekick_them': return `⚡ Vrije trap tegen`;
+    case 'injury': { const it = e.injuryType==='kramp'?'Kramp':e.injuryType==='licht'?'Lichte blessure':'Ernstige blessure'; return `🤕 ${it} · ${pName(m,e.playerId)}${e.leavesField?' — verlaat veld':''}`; }
     case 'quarter_start': return `▶ ${pSing(m)} ${e.quarterNum} gestart`;
     case 'quarter_end': return `⏹ ${pSing(m)} ${e.quarterNum} afgelopen`;
     default: return e.type;
@@ -645,7 +655,21 @@ async function loadHome() {
   const topBtns = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
     <button class="btn btn-pale btn-sm" onclick="go('teams')">👥 Ploegen</button>
     <button class="btn btn-pale btn-sm" onclick="go('stats')">📊 Statistieken</button></div>`;
-  el.innerHTML = topBtns + filterBar + items;
+  const today = new Date().toISOString().split('T')[0];
+  const todayMatches = all.filter(m => m.date === today && (m.status === 'planned' || m.status === 'live'));
+  const todayBanner = todayMatches.length ? `<div class="today-banner">
+    <h3>📅 Vandaag</h3>
+    ${todayMatches.map(m => `<div class="today-match">
+      <div class="tm-info">
+        <div class="tm-opp">${esc(m.teamName ? m.teamName + ' · ' : '')}vs ${esc(m.opponent)}</div>
+        <div class="tm-sub">${m.time || ''} · ${m.location} · ${m.matchType}</div>
+      </div>
+      ${m.status === 'live'
+        ? `<button class="hdr-btn" onclick="go('live','${m.id}')">🔴 Live</button>`
+        : `<button class="hdr-btn" onclick="go('prep','${m.id}')">▶ Starten</button>`}
+    </div>`).join('')}
+  </div>` : '';
+  el.innerHTML = topBtns + todayBanner + filterBar + items;
 }
 
 // ===================== SEIZOENSSTATISTIEKEN =====================
@@ -1070,6 +1094,7 @@ function selRow(p) {
     <div class="seg">
       <button class="${p.sel==='basis'?'basis':''}" onclick="setSel('${p.pid}','basis')">Basis</button>
       <button class="${p.sel==='bank'?'bank':''}" onclick="setSel('${p.pid}','bank')">Bank</button>
+      <button class="${p.sel==='absent'?'absent':''}" onclick="setSel('${p.pid}','absent')" title="Afwezig / speelt elders">✗</button>
     </div></div>`;
 }
 function setPoolNum(pid, val) { const p = wiz.pool.find(x => x.pid === pid); if (p) p.number = val; }
@@ -1077,10 +1102,12 @@ function wizStep2() {
   const own = wiz.pool.filter(p => !p.guest), guests = wiz.pool.filter(p => p.guest);
   const team = teamById(wiz.teamId);
   const need = fieldSizeW(), bc = basisCount();
+  const absentCount = wiz.pool.filter(p => p.sel === 'absent').length;
   return `
     <div class="card" style="display:flex;gap:10px;text-align:center">
       <div style="flex:1"><div style="font-size:22px;font-weight:900;color:${bc===need?'var(--grn)':'var(--org)'}">${bc}/${need}</div><div style="font-size:11px;color:var(--txt2)">BASIS</div></div>
       <div style="flex:1"><div style="font-size:22px;font-weight:900">${bankCount()}</div><div style="font-size:11px;color:var(--txt2)">BANK</div></div>
+      ${absentCount ? `<div style="flex:1"><div style="font-size:22px;font-weight:900;color:var(--rd)">${absentCount}</div><div style="font-size:11px;color:var(--txt2)">AFWEZIG</div></div>` : ''}
     </div>
     <div class="sec">${esc(team ? team.name : 'Ploeg')}</div>
     <div class="card">${own.length ? own.map(selRow).join('') : '<p style="color:var(--txt2);font-size:14px">Deze ploeg heeft nog geen spelers. Voeg ze toe via 👥 Ploegen.</p>'}</div>
@@ -1336,6 +1363,7 @@ function renderLive() {
         <div class="evtbtn ered ${dis}" onclick="modalCard('red')"><span class="ei">🟥</span><span class="el">Rode kaart</span></div>
         <div class="evtbtn epen ${dis}" onclick="modalPenalty()"><span class="ei">🎯</span><span class="el">Penalty</span></div>
         <div class="evtbtn efk ${dis}" onclick="modalFreekick()"><span class="ei">⚡</span><span class="el">Vrije trap</span></div>
+        <div class="evtbtn einj ${dis}" onclick="modalInjury()"><span class="ei">🤕</span><span class="el">Blessure</span></div>
       </div>
       ${(canEvent && hasUndo()) ? `<button class="btn btn-orgpale" onclick="undoLast()">↩ Laatste actie ongedaan maken</button>` : ''}
       ${isDone ? `<button class="btn btn-pale" onclick="go('detail','${match.id}')">📊 Wedstrijd bekijken</button>` : ''}`;
@@ -1648,6 +1676,42 @@ function tglPen(team, btn){ penTeam = team; document.querySelectorAll('#pen-team
 async function logPenalty(scored) {
   if (penTeam === 'us') { addEvent('penalty_us', { scored }); if (scored) match.scoreUs++; }
   else { addEvent('penalty_them', { scored }); if (scored) match.scoreThem++; }
+  await dbSave(match); closeModal(); render();
+}
+
+// ===================== MODAL: INJURY =====================
+let injPlayerId = null, injType = 'kramp';
+function modalInjury() {
+  const on = playersOnField(match);
+  injPlayerId = null; injType = 'kramp';
+  openModal(`<h3>🤕 Blessure</h3>
+    <div class="sec" style="margin-top:0">Welke speler?</div>
+    <div id="inj-players">${on.map(p=>`<div class="mopt" onclick="selectInjuryPlayer('${p.id}',this)"><div class="mopt-num">${p.number||'?'}</div>${esc(p.name)}</div>`).join('')}</div>
+    <div class="sec">Type</div>
+    <div class="tgl" id="inj-type">
+      <button class="act" onclick="tglInjType('kramp',this)">Kramp</button>
+      <button onclick="tglInjType('licht',this)">Lichte blessure</button>
+      <button onclick="tglInjType('ernstig',this)">Ernstig</button>
+    </div>
+    <label class="chkrow" style="margin-bottom:16px"><input type="checkbox" id="inj-off"> Speler verlaat het veld</label>
+    <button class="btn btn-green" onclick="confirmInjury()">✓ Registreren</button>
+    <button class="btn btn-gray" style="margin-top:8px" onclick="closeModal()">Annuleren</button>`);
+}
+function selectInjuryPlayer(id, el) {
+  injPlayerId = id;
+  document.querySelectorAll('#inj-players .mopt').forEach(o => o.classList.remove('sel'));
+  el.classList.add('sel');
+}
+function tglInjType(type, btn) {
+  injType = type;
+  document.querySelectorAll('#inj-type button').forEach(b => b.classList.remove('act'));
+  btn.classList.add('act');
+}
+async function confirmInjury() {
+  if (!injPlayerId) { alert('Kies een speler.'); return; }
+  const leavesField = !!document.getElementById('inj-off')?.checked;
+  addEvent('injury', { playerId: injPlayerId, injuryType: injType, leavesField });
+  if (leavesField) { const p = match.players.find(x => x.id === injPlayerId); if (p) p.onField = false; }
   await dbSave(match); closeModal(); render();
 }
 
