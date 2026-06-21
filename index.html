@@ -495,8 +495,8 @@ function evtLabel(e, m) {
     case 'goal_us': { let s = `⚽ Goal ${pName(m,e.playerId)}`; if (e.assistId) s += ` (assist ${pName(m,e.assistId)})`; return s; }
     case 'goal_them': return `⚽ Tegendoel`;
     case 'own_goal': return `⚽ Eigen doel (${pName(m,e.playerId)})`;
-    case 'corner_us': return `🚩 Hoekschop voor ons`;
-    case 'corner_them': return `🚩 Hoekschop tegen`;
+    case 'corner_us': { let s = '🚩 Hoekschop voor ons'; if (e.cornerType) s += ` · ${e.cornerType}`; if (e.playerId) s += ` · ${pName(m,e.playerId)}`; return s; }
+    case 'corner_them': { let s = '🚩 Hoekschop tegen'; if (e.cornerType) s += ` · ${e.cornerType}`; return s; }
     case 'substitution': return `🔄 ${pName(m,e.playerInId)} voor ${pName(m,e.playerOutId)}`;
     case 'yellow_card': return `🟨 Gele kaart ${pName(m,e.playerId)}`;
     case 'red_card': return `🟥 Rode kaart ${pName(m,e.playerId)}`;
@@ -1608,13 +1608,53 @@ async function confirmGoal() {
 }
 
 // ===================== MODAL: CORNER =====================
+let cornerTeam = 'us', cornerPlayerId = null, cornerType = 'lang';
 function modalCorner() {
+  cornerTeam = 'us'; cornerPlayerId = null; cornerType = 'lang';
+  const on = playersOnField(match);
   openModal(`<h3>🚩 Hoekschop</h3>
-    <div class="mopt" onclick="logCorner('us')"><div class="mopt-num">✓</div>Voor ${esc(tName(match))}</div>
-    <div class="mopt" onclick="logCorner('them')"><div class="mopt-num mopt-num-off">!</div>Voor tegenstander</div>
-    <button class="btn btn-gray" style="margin-top:12px" onclick="closeModal()">Annuleren</button>`);
+    <div class="sec" style="margin-top:0">Voor wie?</div>
+    <div class="tgl" id="corner-team">
+      <button class="act" onclick="tglCornerTeam('us',this)">${esc(tName(match))}</button>
+      <button onclick="tglCornerTeam('them',this)">Tegenstander</button>
+    </div>
+    <div id="corner-player-section">
+      <div class="sec">Wie neemt de hoekschop?</div>
+      <div id="corner-players">
+        ${on.map(p=>`<div class="mopt" onclick="selectCornerPlayer('${p.id}',this)"><div class="mopt-num">${p.number||'?'}</div>${esc(p.name)}</div>`).join('')}
+        <div class="mopt mopt-skip" onclick="selectCornerPlayer(null,this)">Niet ingeven</div>
+      </div>
+    </div>
+    <div class="sec">Type</div>
+    <div class="tgl" id="corner-type">
+      <button class="act" onclick="tglCornerType('lang',this)">Lang</button>
+      <button onclick="tglCornerType('kort',this)">Kort</button>
+    </div>
+    <button class="btn btn-green" style="margin-top:12px" onclick="confirmCorner()">✓ Bevestigen</button>
+    <button class="btn btn-gray" style="margin-top:8px" onclick="closeModal()">Annuleren</button>`);
 }
-async function logCorner(team) { addEvent(team === 'us' ? 'corner_us' : 'corner_them'); await dbSave(match); closeModal(); render(); }
+function tglCornerTeam(team, btn) {
+  cornerTeam = team;
+  document.querySelectorAll('#corner-team button').forEach(b => b.classList.remove('act'));
+  btn.classList.add('act');
+  document.getElementById('corner-player-section').style.display = team === 'us' ? '' : 'none';
+}
+function selectCornerPlayer(id, el) {
+  cornerPlayerId = id;
+  document.querySelectorAll('#corner-players .mopt').forEach(o => o.classList.remove('sel'));
+  el.classList.add('sel');
+}
+function tglCornerType(type, btn) {
+  cornerType = type;
+  document.querySelectorAll('#corner-type button').forEach(b => b.classList.remove('act'));
+  btn.classList.add('act');
+}
+async function confirmCorner() {
+  const evtType = cornerTeam === 'us' ? 'corner_us' : 'corner_them';
+  const extra = cornerTeam === 'us' ? { playerId: cornerPlayerId || null, cornerType } : { cornerType };
+  addEvent(evtType, extra);
+  await dbSave(match); closeModal(); render();
+}
 
 // ===================== MODAL: SUB =====================
 let subOut = null, subIn = null;
