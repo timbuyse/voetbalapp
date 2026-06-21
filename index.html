@@ -385,6 +385,18 @@ function recomputeScore(m) {
   }
   m.scoreUs = us; m.scoreThem = them;
 }
+// Tussenstand t.e.m. een bepaald deel (kwart/helft/...).
+function scoreUpToQuarter(m, qNum) {
+  let us = 0, them = 0;
+  for (const e of m.events) {
+    if (e.quarterNum == null || e.quarterNum > qNum) continue;
+    if (e.type === 'goal_us') us++;
+    else if (e.type === 'goal_them' || e.type === 'own_goal') them++;
+    else if (e.type === 'penalty_us' && e.scored) us++;
+    else if (e.type === 'penalty_them' && e.scored) them++;
+  }
+  return { us, them };
+}
 function recomputeOnField(m) {
   const on = {}; m.players.forEach(p => on[p.id] = !!p.starting);
   for (const e of [...m.events].sort((a, b) => a.gameTimeMs - b.gameTimeMs)) {
@@ -500,9 +512,9 @@ function evtLabel(e, m) {
     case 'substitution': return `🔄 ${pName(m,e.playerInId)} voor ${pName(m,e.playerOutId)}`;
     case 'yellow_card': return `🟨 Gele kaart ${pName(m,e.playerId)}`;
     case 'red_card': return `🟥 Rode kaart ${pName(m,e.playerId)}`;
-    case 'penalty_us': return `🎯 Penalty voor ons${e.scored===true?' — GOAL':e.scored===false?' — gemist':''}`;
+    case 'penalty_us': return `🎯 Penalty voor ons${e.playerId?' · '+pName(m,e.playerId):''}${e.scored===true?' — GOAL':e.scored===false?' — gemist':''}`;
     case 'penalty_them': return `🎯 Penalty tegen${e.scored===true?' — tegendoel':e.scored===false?' — gemist':''}`;
-    case 'freekick_us': return `⚡ Vrije trap voor ons`;
+    case 'freekick_us': return `⚡ Vrije trap voor ons${e.playerId?' · '+pName(m,e.playerId):''}`;
     case 'freekick_them': return `⚡ Vrije trap tegen`;
     case 'injury': { const it = e.injuryType==='kramp'?'Kramp':e.injuryType==='licht'?'Lichte blessure':'Ernstige blessure'; return `🤕 ${it} · ${pName(m,e.playerId)}${e.leavesField?' — verlaat veld':''}`; }
     case 'quarter_start': return `▶ ${pSing(m)} ${e.quarterNum} gestart`;
@@ -1441,14 +1453,21 @@ async function resumeQuarter() {
   await dbSave(match); startTimer(); render();
 }
 // Beëindig het huidige deel handmatig -> pauze tussen de delen (klok staat stil tot de volgende start).
-async function endPeriod() {
+function endPeriod() {
+  const label = pSingLow(match);
+  openModal(`<h3>Einde ${label} ${match.currentQuarter}?</h3>
+    <p style="text-align:center;color:var(--txt2);margin-bottom:16px">De klok stopt en je kan dit ${label} niet meer hervatten.</p>
+    <button class="btn btn-red" onclick="doEndPeriod()">⏹ Ja, beëindig ${label}</button>
+    <button class="btn btn-gray" style="margin-top:8px" onclick="closeModal()">Annuleren</button>`);
+}
+async function doEndPeriod() {
   const q = match.quarters[match.quarters.length - 1];
-  if (!q) return;
+  if (!q) { closeModal(); return; }
   if (q.pausedAt) { q.totalPaused = (q.totalPaused || 0) + (Date.now() - q.pausedAt); q.pausedAt = null; }
   q.endTime = Date.now();
   addEvent('quarter_end');
   match.quarterStatus = 'between';
-  stopTimer(); releaseWake(); await dbSave(match); render();
+  stopTimer(); releaseWake(); await dbSave(match); closeModal(); render();
 }
 function endMatch() {
   openModal(`<h3>Wedstrijd afsluiten?</h3>
@@ -1701,20 +1720,29 @@ async function logCard(color, pid) {
 }
 
 // ===================== MODAL: PENALTY =====================
-let penTeam = 'us';
+let penTeam = 'us', penPlayerId = null;
 function modalPenalty() {
-  penTeam = 'us';
+  penTeam = 'us'; penPlayerId = null;
+  const on = playersOnField(match);
   openModal(`<h3>🎯 Penalty</h3>
     <div class="sec" style="margin-top:0">Voor wie?</div>
     <div class="tgl" id="pen-team"><button class="act" onclick="tglPen('us',this)">${esc(tName(match))}</button><button onclick="tglPen('them',this)">Tegenstander</button></div>
+    <div id="pen-player-section">
+      <div class="sec">Wie neemt de penalty?</div>
+      <div id="pen-players">
+        ${on.map(p=>`<div class="mopt" onclick="selectPenPlayer('${p.id}',this)"><div class="mopt-num">${p.number||'?'}</div>${esc(p.name)}</div>`).join('')}
+        <div class="mopt mopt-skip" onclick="selectPenPlayer(null,this)">Niet ingeven</div>
+      </div>
+    </div>
     <div class="sec">Resultaat?</div>
     <div class="mopt" onclick="logPenalty(true)"><div class="mopt-num">⚽</div>Gescoord</div>
     <div class="mopt" onclick="logPenalty(false)"><div class="mopt-num mopt-num-off">✗</div>Gemist / gestopt</div>
     <button class="btn btn-gray" style="margin-top:12px" onclick="closeModal()">Annuleren</button>`);
 }
-function tglPen(team, btn){ penTeam = team; document.querySelectorAll('#pen-team button').forEach(b=>b.classList.remove('act')); btn.classList.add('act'); }
+function tglPen(team, btn){ penTeam = team; document.querySelectorAll('#pen-team button').forEach(b=>b.classList.remove('act')); btn.classList.add('act'); const s=document.getElementById('pen-player-section'); if(s) s.style.display = team==='us'?'':'none'; }
+function selectPenPlayer(id, el){ penPlayerId = id; document.querySelectorAll('#pen-players .mopt').forEach(o=>o.classList.remove('sel')); el.classList.add('sel'); }
 async function logPenalty(scored) {
-  if (penTeam === 'us') { addEvent('penalty_us', { scored }); if (scored) match.scoreUs++; }
+  if (penTeam === 'us') { addEvent('penalty_us', { scored, playerId: penPlayerId || null }); if (scored) match.scoreUs++; }
   else { addEvent('penalty_them', { scored }); if (scored) match.scoreThem++; }
   await dbSave(match); closeModal(); render();
 }
@@ -1771,13 +1799,33 @@ function modalSubAfterInjury(outId) {
 }
 
 // ===================== MODAL: FREE KICK =====================
+let fkTeam = 'us', fkPlayerId = null;
 function modalFreekick() {
+  fkTeam = 'us'; fkPlayerId = null;
+  const on = playersOnField(match);
   openModal(`<h3>⚡ Vrije trap</h3>
-    <div class="mopt" onclick="logFreekick('us')"><div class="mopt-num">✓</div>Voor ${esc(tName(match))}</div>
-    <div class="mopt" onclick="logFreekick('them')"><div class="mopt-num mopt-num-off">!</div>Voor tegenstander</div>
-    <button class="btn btn-gray" style="margin-top:12px" onclick="closeModal()">Annuleren</button>`);
+    <div class="sec" style="margin-top:0">Voor wie?</div>
+    <div class="tgl" id="fk-team">
+      <button class="act" onclick="tglFk('us',this)">${esc(tName(match))}</button>
+      <button onclick="tglFk('them',this)">Tegenstander</button>
+    </div>
+    <div id="fk-player-section">
+      <div class="sec">Wie neemt de vrije trap?</div>
+      <div id="fk-players">
+        ${on.map(p=>`<div class="mopt" onclick="selectFkPlayer('${p.id}',this)"><div class="mopt-num">${p.number||'?'}</div>${esc(p.name)}</div>`).join('')}
+        <div class="mopt mopt-skip" onclick="selectFkPlayer(null,this)">Niet ingeven</div>
+      </div>
+    </div>
+    <button class="btn btn-green" style="margin-top:12px" onclick="confirmFreekick()">✓ Bevestigen</button>
+    <button class="btn btn-gray" style="margin-top:8px" onclick="closeModal()">Annuleren</button>`);
 }
-async function logFreekick(team) { addEvent(team === 'us' ? 'freekick_us' : 'freekick_them'); await dbSave(match); closeModal(); render(); }
+function tglFk(team, btn){ fkTeam = team; document.querySelectorAll('#fk-team button').forEach(b=>b.classList.remove('act')); btn.classList.add('act'); const s=document.getElementById('fk-player-section'); if(s) s.style.display = team==='us'?'':'none'; }
+function selectFkPlayer(id, el){ fkPlayerId = id; document.querySelectorAll('#fk-players .mopt').forEach(o=>o.classList.remove('sel')); el.classList.add('sel'); }
+async function confirmFreekick() {
+  if (fkTeam === 'us') addEvent('freekick_us', { playerId: fkPlayerId || null });
+  else addEvent('freekick_them');
+  await dbSave(match); closeModal(); render();
+}
 
 // ===================== DETAIL VIEW =====================
 function renderDetail() {
@@ -1786,8 +1834,10 @@ function renderDetail() {
   const qSummary = match.quarters.map(q => {
     const dur = q.endTime ? q.endTime - q.startTime - (q.totalPaused||0) : getQElapsed(match);
     const goals = match.events.filter(e => (e.type==='goal_us'||e.type==='goal_them'||e.type==='own_goal'||(e.type.startsWith('penalty')&&e.scored)) && e.quarterNum === q.num);
+    const cum = scoreUpToQuarter(match, q.num);
     return `<div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--bdr)">
       <div style="font-weight:800;min-width:32px">${pAbbr(match)}${q.num}</div>
+      <div style="font-weight:900;min-width:54px;font-variant-numeric:tabular-nums"><span style="color:var(--grn)">${cum.us}</span>–${cum.them}</div>
       <div style="flex:1;font-size:13px;color:var(--txt2)">${fmtTime(dur)}</div>
       <div style="font-size:13px;text-align:right">${goals.map(e=>evtLabel(e,match)).join('<br>')||'–'}</div>
     </div>`;
