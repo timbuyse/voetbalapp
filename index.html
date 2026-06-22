@@ -565,6 +565,26 @@ function cloudListen() {
   if (!cloudReady) return;
   fbdb.ref('matches').on('value', s => applyCloudMatches(s.val() || {}));
   fbdb.ref('teams').on('value', s => applyCloudTeams(s.val() || []));
+  fbdb.ref('club').on('value', s => applyCloudClub(s.val()));
+}
+// Club-identiteit (naam/logo/thema) delen → kijkers hoeven niets in te stellen.
+function cloudOnLocalClubSave() {
+  if (!cloudReady || !isAdmin) return;
+  const theme = localStorage.getItem('voetbal_theme');
+  try { fbdb.ref('club').set({
+    name: localStorage.getItem('voetbal_club_name') || '',
+    logo: localStorage.getItem('voetbal_club_logo') || '',
+    theme: theme || null
+  }); } catch (e) {}
+}
+function applyCloudClub(val) {
+  if (!val) return;
+  if (val.name) localStorage.setItem('voetbal_club_name', val.name);
+  if (val.logo) localStorage.setItem('voetbal_club_logo', val.logo);
+  if (val.theme) localStorage.setItem('voetbal_theme', val.theme); else localStorage.removeItem('voetbal_theme');
+  localStorage.setItem('voetbal_setup_done', '1'); // kijkers hoeven de setup niet te doorlopen
+  applyStoredTheme();
+  if (view === 'home' || view === 'setup') { view = 'home'; render(); } else cloudRefreshUI();
 }
 
 async function applyCloudMatches(obj) {
@@ -651,6 +671,7 @@ async function cloudPushAll() {
     const all = await dbAll();
     for (const m of all) { try { await fbdb.ref('matches/' + m.id).set(jclone(m)); } catch (e) {} }
     try { await fbdb.ref('teams').set(jclone(getTeamsV2())); } catch (e) {}
+    cloudOnLocalClubSave();
     if (el) el.textContent = `✓ ${all.length} wedstrijd(en) + ploegen gedeeld.`;
   } catch (e) { if (el) el.textContent = 'Er ging iets mis.'; }
 }
@@ -965,7 +986,7 @@ async function loadHome() {
   const newBtn = canManage() ? `<button class="btn btn-green" onclick="newMatch()" style="margin-bottom:14px">⚽ + Nieuwe wedstrijd</button>` : '';
   const lastB = localStorage.getItem('voetbal_last_backup');
   const ageDays = lastB ? (Date.now() - +lastB) / 864e5 : Infinity;
-  const backupBanner = all.length && ageDays > 14 ? `<div class="backup-banner"><span>💾 ${lastB ? 'Je laatste back-up is meer dan 2 weken oud.' : 'Maak een back-up zodat je niets verliest.'}</span><button class="btn btn-org btn-sm" onclick="go('settings')">Back-up</button></div>` : '';
+  const backupBanner = (canManage() && all.length && ageDays > 14) ? `<div class="backup-banner"><span>💾 ${lastB ? 'Je laatste back-up is meer dan 2 weken oud.' : 'Maak een back-up zodat je niets verliest.'}</span><button class="btn btn-org btn-sm" onclick="go('settings')">Back-up</button></div>` : '';
   el.innerHTML = tiles + newBtn + backupBanner + `<div class="sec">📅 Eerstvolgende wedstrijd</div>` + filterBar + upcomingHtml + recentHtml;
 }
 // WEDSTRIJDEN = volledige lijst met filter + zoeken.
@@ -1114,7 +1135,7 @@ function renderSettings(isFirst) {
     : `<div class="hdr"><button class="back" onclick="go('home')">‹</button><h1>Instellingen</h1></div>`}
   <div class="content">
     ${isFirst ? `<div class="welcome"><h2>Welkom! 👋</h2><p>Geef je club of ploeg een naam en een logo.<br>De kleuren van de app passen zich automatisch aan je logo aan.</p></div>` : ''}
-    <div class="card">
+    ${(isFirst || canManage()) ? `<div class="card">
       <div class="fg"><label>Naam van de club / ploeg</label>
         <input id="s-name" type="text" placeholder="bv. KFC Sparta Petegem Deinze" value="${esc(localStorage.getItem('voetbal_club_name') || '')}"></div>
       <div class="fg"><label>Logo</label>
@@ -1124,21 +1145,21 @@ function renderSettings(isFirst) {
         <p style="font-size:12px;color:var(--txt2);margin-top:8px">De app-kleuren volgen automatisch de kleuren van je logo.</p>
       </div>
     </div>
-    <button class="btn btn-green" onclick="saveSettings(${isFirst})">✓ ${isFirst ? 'Aan de slag' : 'Opslaan'}</button>
+    <button class="btn btn-green" onclick="saveSettings(${isFirst})">✓ ${isFirst ? 'Aan de slag' : 'Opslaan'}</button>` : '<div class="viewer-banner">👁 Je kijkt mee — naam en logo worden door de beheerder ingesteld</div>'}
     ${isFirst ? '' : `
     <div class="sec">Weergave</div>
     <div class="card">
       <div style="display:flex;align-items:center;gap:10px"><div style="flex:1"><b style="font-size:15px">🌙 Donkere modus</b><div style="font-size:12px;color:var(--txt2)">Rustiger scherm, handig 's avonds.</div></div>
         <span class="start-chip ${darkOn()?'on':''}" onclick="toggleDark()">${darkOn()?'Aan':'Uit'}</span></div>
     </div>
-    <div class="sec">Back-up &amp; herstel</div>
+    ${canManage() ? `<div class="sec">Back-up &amp; herstel</div>
     <div class="card">
       <p style="font-size:13px;color:var(--txt2);margin-bottom:12px">Alle wedstrijden en instellingen (ook je ploegen) staan enkel op dit toestel. Maak een back-up om niets te verliezen, of zet ze terug op een ander toestel.</p>
       ${(() => { const t = localStorage.getItem('voetbal_last_backup'); return `<p style="font-size:12px;color:${t?'var(--txt2)':'var(--org2)'};margin-bottom:10px">${t?('Laatste back-up: '+fmtDate(+t)):'⚠ Nog geen back-up gemaakt.'}</p>`; })()}
       <button class="btn btn-pale" onclick="exportBackup()">⬇ Back-up downloaden</button>
       <label class="file-btn" style="margin-top:8px">⬆ Back-up herstellen of importeren<input type="file" accept="application/json,.json" onchange="importBackup(this)"></label>
       <p style="font-size:12px;color:var(--txt2);margin-top:8px">Bij herstellen kan je kiezen tussen samenvoegen (toevoegen) of alles vervangen.</p>
-    </div>`}
+    </div>` : ''}`}
   </div>`;
 }
 async function exportBackup() {
@@ -1259,6 +1280,7 @@ function saveSettings(isFirst) {
   }
   localStorage.setItem('voetbal_setup_done', '1');
   applyStoredTheme();
+  cloudOnLocalClubSave();
   go('home');
 }
 
@@ -2606,7 +2628,8 @@ async function init() {
       if (q && q.startTime && !q.pausedAt && !q.endTime) requestWake();
     }
   });
-  if (!setupDone()) { view = 'setup'; render(); return; }
+  // Met cloud: identiteit komt van de beheerder → kijkers slaan de setup over.
+  if (!setupDone() && !cloudReady) { view = 'setup'; render(); return; }
   const all = await dbAll();
   const live = all.find(m => m.status === 'live');
   if (live) { match = live; view = 'live'; startTimer(); }
