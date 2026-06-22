@@ -285,11 +285,19 @@
       body{background:#fff}
       .content{max-width:100%;padding:0}
     }
+    .cloud-chip{cursor:pointer;font-size:12px;font-weight:700;padding:5px 10px;border-radius:999px;margin-left:auto;white-space:nowrap;user-select:none}
+    .cloud-chip.admin{background:#1f9d55;color:#fff}
+    .cloud-chip.viewer{background:rgba(255,255,255,.22);color:#fff;border:1px solid rgba(255,255,255,.45)}
+    .viewer-banner{background:#eef4ff;border:1px solid #c7dafc;color:#1d4ed8;border-radius:10px;padding:10px 12px;font-size:13px;font-weight:600;text-align:center;margin-bottom:12px}
   </style>
 </head>
 <body>
 <div id="app"></div>
 <div id="modal" class="hidden"></div>
+<!-- Firebase (cloud delen). Faalt stil als offline: app blijft lokaal werken. -->
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
 <script>
 // ===================== CONFIG =====================
 const MATCH_TYPES = {
@@ -363,7 +371,7 @@ function applyTheme(t) {
 }
 function applyStoredTheme() { let t = null; try { t = JSON.parse(localStorage.getItem('voetbal_theme') || 'null'); } catch (e) {} applyTheme(t || GENERIC_THEME); }
 // Donkere modus (per toestel)
-function darkOn() { return localStorage.getItem('voetbal_dark') !== '0'; } // standaard AAN (enkel '0' = uit)
+function darkOn() { return localStorage.getItem('voetbal_dark') === '1'; } // standaard UIT (light); enkel '1' = donker
 function applyDark() { document.body.classList.toggle('dark', darkOn()); }
 function toggleDark() { localStorage.setItem('voetbal_dark', darkOn() ? '0' : '1'); applyDark(); render(); }
 // Dominante kleuren uit een canvas halen -> {primary, accent, dark}
@@ -396,7 +404,7 @@ function getRoster(t) { return getRosters()[rosterKey(t)] || []; }
 function saveRoster(t, players) { if (!rosterKey(t)) return; const r = getRosters(); r[rosterKey(t)] = players; localStorage.setItem('voetbal_rosters', JSON.stringify(r)); }
 // ----- Ploegen v2: {id, name, players:[{id,name,number,pos}]} -----
 function getTeamsV2() { try { return JSON.parse(localStorage.getItem('voetbal_teams_v2') || '[]'); } catch (e) { return []; } }
-function saveTeamsV2(arr) { localStorage.setItem('voetbal_teams_v2', JSON.stringify(arr)); }
+function saveTeamsV2(arr) { localStorage.setItem('voetbal_teams_v2', JSON.stringify(arr)); cloudOnLocalTeamsSave(arr); }
 function teamById(id) { return getTeamsV2().find(t => t.id === id) || null; }
 function migrateTeams() {
   if (localStorage.getItem('voetbal_teams_v2')) return;
@@ -479,16 +487,169 @@ function dbGet(id) {
 function dbSave(m) {
   return new Promise((res, rej) => {
     const r = db.transaction('matches','readwrite').objectStore('matches').put(m);
-    r.onsuccess = () => res();
+    r.onsuccess = () => { cloudOnLocalMatchSave(m); res(); };
     r.onerror = e => rej(e.target.error);
   });
 }
 function dbDel(id) {
   return new Promise((res, rej) => {
     const r = db.transaction('matches','readwrite').objectStore('matches').delete(id);
+    r.onsuccess = () => { cloudOnLocalMatchDelete(id); res(); };
+    r.onerror = e => rej(e.target.error);
+  });
+}
+// Lokaal schrijven ZONDER naar de cloud te pushen (gebruikt door de cloud-listener zelf).
+function dbPutLocal(m) {
+  return new Promise((res, rej) => {
+    const r = db.transaction('matches','readwrite').objectStore('matches').put(m);
     r.onsuccess = () => res();
     r.onerror = e => rej(e.target.error);
   });
+}
+function dbDelLocal(id) {
+  return new Promise((res, rej) => {
+    const r = db.transaction('matches','readwrite').objectStore('matches').delete(id);
+    r.onsuccess = () => res();
+    r.onerror = e => rej(e.target.error);
+  });
+}
+
+// ===================== CLOUD SYNC (Firebase) =====================
+// Model: lezen mag iedereen (kijkers), schrijven enkel ingelogde beheerders (jij + trainers).
+// Gedeelde matchen/ploegen krijgen lokaal de vlag fromCloud:true zodat ze los staan van
+// wat een kijker eventueel zelf lokaal aanmaakt.
+const FB_CONFIG = {
+  apiKey: "AIzaSyDZ9-WRwd8KJcIwMn_8f2T4EFr35j45Wxc",
+  authDomain: "voetbalapp-fc20d.firebaseapp.com",
+  databaseURL: "https://voetbalapp-fc20d-default-rtdb.europe-west1.firebasedatabase.app",
+  projectId: "voetbalapp-fc20d",
+  storageBucket: "voetbalapp-fc20d.firebasestorage.app",
+  messagingSenderId: "89493655886",
+  appId: "1:89493655886:web:2c9e9989ee8694059f4e1f"
+};
+// Vast beheer-account: trainers typen enkel het wachtwoord, het e-mailadres staat vast.
+const ADMIN_EMAIL = "trainers@voetbalapp.be";
+let cloudReady = false, isAdmin = false, fbdb = null, fbauth = null;
+
+function cloudAvailable() { return typeof firebase !== 'undefined'; }
+function jclone(o) { return JSON.parse(JSON.stringify(o)); }
+
+function cloudInit() {
+  if (!cloudAvailable()) return;
+  try {
+    firebase.initializeApp(FB_CONFIG);
+    fbdb = firebase.database();
+    fbauth = firebase.auth();
+    cloudReady = true;
+    fbauth.onAuthStateChanged(u => { isAdmin = !!u; updateCloudChip(); cloudRefreshUI(); });
+    cloudListen();
+  } catch (e) { cloudReady = false; }
+}
+
+// ---- schrijven (enkel beheerders) ----
+function cloudOnLocalMatchSave(m) {
+  if (!cloudReady || !isAdmin || !m || !m.id) return;
+  try { fbdb.ref('matches/' + m.id).set(jclone(m)); } catch (e) {}
+}
+function cloudOnLocalMatchDelete(id) {
+  if (!cloudReady || !isAdmin || !id) return;
+  try { fbdb.ref('matches/' + id).remove(); } catch (e) {}
+}
+function cloudOnLocalTeamsSave(arr) {
+  if (!cloudReady || !isAdmin) return;
+  try { fbdb.ref('teams').set(jclone(arr || [])); } catch (e) {}
+}
+
+// ---- lezen (iedereen) ----
+function cloudListen() {
+  if (!cloudReady) return;
+  fbdb.ref('matches').on('value', s => applyCloudMatches(s.val() || {}));
+  fbdb.ref('teams').on('value', s => applyCloudTeams(s.val() || []));
+}
+
+async function applyCloudMatches(obj) {
+  if (!db) return;
+  const cloudIds = new Set(Object.keys(obj));
+  const local = await dbAll();
+  for (const m of local) { if (m.fromCloud && !cloudIds.has(m.id)) await dbDelLocal(m.id); }
+  for (const id of cloudIds) {
+    const m = obj[id]; if (!m) continue;
+    m.id = id; m.fromCloud = true;
+    if (!Array.isArray(m.events)) m.events = [];
+    if (!Array.isArray(m.players)) m.players = [];
+    if (!Array.isArray(m.quarters)) m.quarters = [];
+    await dbPutLocal(m);
+  }
+  cloudRefreshUI();
+}
+function applyCloudTeams(val) {
+  const cloud = Array.isArray(val) ? val : Object.values(val || {});
+  const cloudIds = new Set(cloud.map(t => t && t.id).filter(Boolean));
+  const localOnly = getTeamsV2().filter(t => !t.fromCloud && !cloudIds.has(t.id));
+  const merged = localOnly.concat(cloud.map(t => Object.assign({}, t, { fromCloud: true })));
+  localStorage.setItem('voetbal_teams_v2', JSON.stringify(merged));
+  cloudRefreshUI();
+}
+
+function cloudRefreshUI() {
+  if (view === 'home') loadHome();
+  else if (view === 'matches') loadMatches();
+  else if (view === 'stats' && typeof loadStats === 'function') loadStats();
+  else if (view === 'teams') render();
+  // Live/detail/prep: kijkers (geen beheer) volgen de cloud automatisch; de beheerder
+  // die zelf invoert laten we ongemoeid zodat zijn invoer niet onderbroken wordt.
+  else if ((view === 'detail' || view === 'live' || view === 'prep') && match && !isAdmin) {
+    dbGet(match.id).then(m => { if (m) { match = m; render(); } });
+  }
+}
+
+// ---- login / status ----
+function canEditMatch() { return !match || !match.fromCloud || isAdmin; }
+function updateCloudChip() {
+  const el = document.getElementById('cloud-chip');
+  if (!el) return;
+  if (!cloudReady) { el.style.display = 'none'; return; }
+  el.style.display = '';
+  el.textContent = isAdmin ? '✏️ Beheer' : '👁 Kijken';
+  el.className = 'cloud-chip ' + (isAdmin ? 'admin' : 'viewer');
+}
+function cloudLoginModal() {
+  if (!cloudReady) { openModal(`<h3>Geen verbinding</h3><p style="text-align:center;color:var(--txt2)">De cloud is niet bereikbaar (offline?). De app werkt gewoon lokaal verder.</p><button class="btn btn-gray" onclick="closeModal()">Sluiten</button>`); return; }
+  if (isAdmin) {
+    openModal(`<h3>✏️ Beheermodus actief</h3>
+      <p style="text-align:center;color:var(--txt2);margin-bottom:16px">Je ploegen en wedstrijden worden gedeeld en live bijgewerkt voor iedereen.</p>
+      <button class="btn btn-green" onclick="cloudPushAll()">⬆ Al mijn lokale data nu delen</button>
+      <div id="cl-push" style="text-align:center;font-size:13px;color:var(--txt2);min-height:18px;margin-top:6px"></div>
+      <button class="btn btn-gray" style="margin-top:8px" onclick="cloudLogout()">Afmelden (terug naar kijken)</button>
+      <button class="btn btn-pale" style="margin-top:8px" onclick="closeModal()">Sluiten</button>`);
+    return;
+  }
+  openModal(`<h3>🔑 Beheer aanmelden</h3>
+    <p style="text-align:center;color:var(--txt2);font-size:13px;margin-bottom:14px">Voor trainers. Geef de beheercode in om ploegen en wedstrijden te delen. Kijkers hoeven niets in te geven.</p>
+    <div class="fg"><label>Beheercode</label><input id="cl-pwd" type="password" autocomplete="current-password" placeholder="wachtwoord"></div>
+    <div id="cl-err" style="color:var(--red,#d33);font-size:13px;text-align:center;min-height:18px"></div>
+    <button class="btn btn-green" onclick="cloudDoLogin()">Aanmelden</button>
+    <button class="btn btn-gray" style="margin-top:8px" onclick="closeModal()">Annuleren</button>`);
+}
+function cloudDoLogin() {
+  const pwd = (document.getElementById('cl-pwd') || {}).value || '';
+  const err = document.getElementById('cl-err');
+  if (err) err.textContent = 'Bezig...';
+  fbauth.signInWithEmailAndPassword(ADMIN_EMAIL, pwd)
+    .then(() => { closeModal(); })
+    .catch(() => { if (err) err.textContent = 'Onjuiste code.'; });
+}
+function cloudLogout() { try { fbauth.signOut(); } catch (e) {} closeModal(); }
+// Eenmalig: alle bestaande lokale matchen + ploegen naar de cloud duwen (initiële vulling).
+async function cloudPushAll() {
+  if (!cloudReady || !isAdmin) return;
+  const el = document.getElementById('cl-push'); if (el) el.textContent = 'Bezig met delen...';
+  try {
+    const all = await dbAll();
+    for (const m of all) { try { await fbdb.ref('matches/' + m.id).set(jclone(m)); } catch (e) {} }
+    try { await fbdb.ref('teams').set(jclone(getTeamsV2())); } catch (e) {}
+    if (el) el.textContent = `✓ ${all.length} wedstrijd(en) + ploegen gedeeld.`;
+  } catch (e) { if (el) el.textContent = 'Er ging iets mis.'; }
 }
 
 // ===================== STATE =====================
@@ -600,8 +761,9 @@ function renderEventLog(m) {
   return groups.map(g => {
     const head = g.qn == null ? 'Overig' : `${pSing(m)} ${g.qn}`;
     const score = g.cum ? `<span class="qgroup-score"><span class="us">${g.cum.us}</span>–${g.cum.them}</span>` : '';
+    const elog_ro = !!(m.fromCloud && !isAdmin);
     const items = g.list.length
-      ? g.list.map(e => `<li><span class="emin">${gameMin(e.gameTimeMs)}'</span><span class="etxt">${evtLabel(e, m)}</span><button class="evt-edit no-print" onclick="modalEditEvent('${e.id}')" title="Bewerken">✏️</button><button class="evt-del no-print" onclick="confirmDeleteEvent('${e.id}')" title="Verwijderen">×</button></li>`).join('')
+      ? g.list.map(e => `<li><span class="emin">${gameMin(e.gameTimeMs)}'</span><span class="etxt">${evtLabel(e, m)}</span>${elog_ro ? '' : `<button class="evt-edit no-print" onclick="modalEditEvent('${e.id}')" title="Bewerken">✏️</button><button class="evt-del no-print" onclick="confirmDeleteEvent('${e.id}')" title="Verwijderen">×</button>`}</li>`).join('')
       : '<li class="qgroup-empty">Geen events in dit deel.</li>';
     return `<div class="qgroup"><div class="qgroup-head"><span>${head}</span>${score}</div><ul class="elog">${items}</ul></div>`;
   }).join('');
@@ -729,7 +891,8 @@ function pitchSVG(m, players) {
 const views = {
   home: () => {
     loadHome();
-    return `<div class="hdr hdr-home"><img src="${getClubLogo()}" class="hdr-crest" alt="logo"><span class="hdr-clubname">${esc(getClubName())}</span><button class="hdr-gear" onclick="go('settings')" title="Instellingen">⚙</button></div>
+    setTimeout(updateCloudChip, 0);
+    return `<div class="hdr hdr-home"><img src="${getClubLogo()}" class="hdr-crest" alt="logo"><span class="hdr-clubname">${esc(getClubName())}</span><span id="cloud-chip" class="cloud-chip" style="display:none" onclick="cloudLoginModal()"></span><button class="hdr-gear" onclick="go('settings')" title="Instellingen">⚙</button></div>
       <div class="content" id="home-content"><div class="empty"><div class="ei">⏳</div><p>Laden...</p></div></div>
       <div class="credit">App created by <b>Tim Buyse</b></div>`;
   },
@@ -1539,6 +1702,7 @@ function editMatchWizard(m) {
 function renderPrep() {
   const m = match;
   if (!m) return '<div class="content"><p>Niet gevonden.</p></div>';
+  const ro = !!(m.fromCloud && !isAdmin); // kijker: alleen-lezen
   const starters = m.players.filter(p => p.starting), bench = m.players.filter(p => !p.starting);
   const info = [['Formatie', m.formation], ['Trainer', m.trainer], ['Ploegverantwoordelijke', m.responsible], ['Soort', m.competition], ['Speeldag', m.matchday], ['Scheidsrechter', m.referee], ['Truitkleur', m.jersey], ['Weer / veld', m.weather]].filter(([k, v]) => v);
   return `
@@ -1546,19 +1710,19 @@ function renderPrep() {
     <div><h1>${esc(tName(m))} vs ${esc(m.opponent)}</h1><div class="hdr-sub">🗓 Gepland · ${m.location} · ${matchWhen(m)} · ${m.matchType}</div></div>
   </div>
   <div class="content">
-    <button class="btn btn-green" onclick="startPlanned()">▶ Wedstrijd starten</button>
+    ${ro ? '<div class="viewer-banner">👁 Je kijkt mee — deze wedstrijd is gepland</div>' : `<button class="btn btn-green" onclick="startPlanned()">▶ Wedstrijd starten</button>
     <div class="wiz-nav" style="margin-top:8px">
       <button class="btn btn-pale" onclick="editMatchWizard(match)">✏️ Bewerken</button>
       <button class="btn btn-orgpale" onclick="modalEditPlayers()">👤 Spelers</button>
     </div>
-    <button class="btn btn-gray" style="margin-top:8px" onclick="modalQuickResult()">⚡ Snel resultaat invoeren</button>
+    <button class="btn btn-gray" style="margin-top:8px" onclick="modalQuickResult()">⚡ Snel resultaat invoeren</button>`}
     <div class="sec">Info</div>
     <div class="card">${info.length ? info.map(([k, v]) => `<div class="stat-row"><span style="color:var(--txt2);min-width:120px">${k}</span><span style="font-weight:600">${esc(v)}</span></div>`).join('') : '<p style="color:var(--txt2);font-size:14px">Geen extra info.</p>'}</div>
     <div class="sec">Opstelling (${starters.length})</div>
     <div class="card">${renderPitch(m, starters)}</div>
     <div class="sec">Bank (${bench.length})</div>
     <div class="card">${bench.length ? bench.map(p => `<div class="prow"><div class="pnum pnum-off">${p.number || '?'}</div><div style="flex:1"><div class="pname">${esc(p.name)}</div><div class="ppos">${p.line}</div></div></div>`).join('') : '<p style="color:var(--txt2);font-size:14px">Geen bankspelers.</p>'}</div>
-    <div class="danger"><button class="btn btn-red" onclick="confirmDelete()">🗑 Wedstrijd verwijderen</button></div>
+    ${ro ? '' : `<div class="danger"><button class="btn btn-red" onclick="confirmDelete()">🗑 Wedstrijd verwijderen</button></div>`}
   </div>`;
 }
 async function startPlanned() { match.status = 'live'; await dbSave(match); await go('live', match.id); }
@@ -1638,16 +1802,17 @@ async function saveEditPlayers() {
 // ===================== LIVE MATCH =====================
 function renderLive() {
   if (!match) return '<div class="content"><p>Geen wedstrijd.</p></div>';
+  const ro = !!(match.fromCloud && !isAdmin); // kijker: alleen-lezen
   const q = match.quarters[match.quarters.length - 1];
   const isRunning = q && q.startTime && !q.pausedAt && !q.endTime;
   const isPaused = q && q.pausedAt;
   const isBetween = match.quarterStatus === 'between';
   const isDone = match.status === 'done';
   const qNum = match.currentQuarter;
-  const canStartFirst = !isDone && qNum === 0;
-  const canStartNext = !isDone && isBetween && qNum < match.numQuarters;
+  const canStartFirst = !ro && !isDone && qNum === 0;
+  const canStartNext = !ro && !isDone && isBetween && qNum < match.numQuarters;
   const isLastPeriod = qNum >= match.numQuarters;
-  const canEvent = (isRunning || isPaused) && !isDone;
+  const canEvent = !ro && (isRunning || isPaused) && !isDone;
   const dis = canEvent ? '' : 'disabled';
   const completed = (isBetween || isDone) ? qNum : qNum - 1;
   const dots = Array.from({length: match.numQuarters}, (_,i) => {
@@ -1680,7 +1845,7 @@ function renderLive() {
       </div>
       ${keeperChip}
       ${mNudge}
-      ${!isDone ? `<div class="qctrl">
+      ${(!isDone && !ro) ? `<div class="qctrl">
         ${canStartFirst ? `<button class="qbtn qbtn-start" onclick="startQuarter()" style="grid-column:1/-1">▶ Start wedstrijd</button>` : ''}
         ${canStartNext ? `<button class="qbtn qbtn-start" onclick="startQuarter()" style="grid-column:1/-1">▶ Start ${pSingLow(match)} ${qNum+1}</button>` : ''}
         ${isRunning ? `<button class="qbtn qbtn-pause" onclick="pauseQuarter()">⏸ Pauze</button>` : ''}
@@ -1694,7 +1859,7 @@ function renderLive() {
         ${(match.pendingSubs&&match.pendingSubs.length) ? match.pendingSubs.map((s,i)=>`<div class="prow" style="padding:8px 0"><div style="flex:1;font-size:14px">🔄 <b>${esc(pName(match,s.inId))}</b> <span style="color:var(--txt2)">voor</span> ${esc(pName(match,s.outId))}</div><button class="evt-del" onclick="removePendingSub(${i})" title="Verwijderen">×</button></div>`).join('') : `<p style="color:var(--txt2);font-size:13px">Nog geen wissels ingepland. Voeg ze nu toe; ze worden automatisch doorgevoerd bij de start van ${pSingLow(match)} ${qNum+1}.</p>`}
         <button class="btn btn-orgpale btn-sm" style="margin-top:8px;width:100%" onclick="modalSub()">➕ Pauzewissel toevoegen</button>
       </div>` : ''}
-      <div class="evtbtns">
+      ${ro ? '' : `<div class="evtbtns">
         <div class="evtbtn eg ${dis}" onclick="modalGoal()"><span class="ei">⚽</span><span class="el">Goal</span></div>
         <div class="evtbtn ec ${dis}" onclick="modalCorner()"><span class="ei">🚩</span><span class="el">Hoekschop</span></div>
         <div class="evtbtn es ${dis}" onclick="modalSub()"><span class="ei">🔄</span><span class="el">Wissel</span></div>
@@ -1703,7 +1868,7 @@ function renderLive() {
         <div class="evtbtn epen ${dis}" onclick="modalPenalty()"><span class="ei">🎯</span><span class="el">Penalty</span></div>
         <div class="evtbtn einj ${dis}" onclick="modalInjury()"><span class="ei">🤕</span><span class="el">Blessure</span></div>
         <div class="evtbtn ${dis}" onclick="modalExtra()"><span class="ei">📊</span><span class="el">Meer</span></div>
-      </div>
+      </div>`}
       ${(canEvent && hasUndo()) ? `<button class="btn btn-orgpale" onclick="undoLast()">↩ Laatste actie ongedaan maken</button>` : ''}
       ${isDone ? `<button class="btn btn-pale" onclick="go('detail','${match.id}')">📊 Wedstrijd bekijken</button>` : ''}`;
   } else if (tab === 'opstelling') {
@@ -1715,20 +1880,20 @@ function renderLive() {
         ${on.length ? on.map(p => playerRowHtml(p, mins[p.id], false, getGameTimeMs(match))).join('') : '<p style="color:var(--txt2);font-size:14px">Niemand op het veld.</p>'}
         ${off.length ? `<hr><div class="sec">Bank (${off.length})</div>${off.map(p => playerRowHtml(p, mins[p.id], true, getGameTimeMs(match))).join('')}` : ''}
       </div>
-      <button class="btn btn-orgpale" onclick="modalEditPlayers()">✏️ Spelers bewerken</button>`;
+      ${ro ? '' : `<button class="btn btn-orgpale" onclick="modalEditPlayers()">✏️ Spelers bewerken</button>`}`;
   } else {
     tabContent = (match.events.length
       ? `<div class="card">${renderEventLog(match)}</div>`
       : `<div class="empty"><div class="ei">📋</div><p>Nog geen events.</p></div>`)
-      + `<button class="btn btn-pale" style="margin-top:4px" onclick="modalEditMatchInfo()">📋 Wedstrijdinfo bewerken</button>`;
+      + (ro ? '' : `<button class="btn btn-pale" style="margin-top:4px" onclick="modalEditMatchInfo()">📋 Wedstrijdinfo bewerken</button>`);
   }
 
   return `
   <div class="hdr"><button class="back" onclick="confirmLeave()">‹</button>
     <div><h1>${esc(tName(match))} vs ${esc(match.opponent)}</h1><div class="hdr-sub">${match.location} · ${matchWhen(match)} · ${match.matchType}</div></div>
-    ${!isDone ? `<button class="hdr-btn" onclick="endMatch()">Afsluiten</button>` : ''}
+    ${(!isDone && !ro) ? `<button class="hdr-btn" onclick="endMatch()">Afsluiten</button>` : ''}
   </div>
-  <div class="content">${tabContent}</div>
+  <div class="content">${ro ? '<div class="viewer-banner">👁 Je kijkt mee — dit scherm wordt live bijgewerkt</div>' : ''}${tabContent}</div>
   <div class="ltabs">
     <button class="ltab ${tab==='wedstrijd'?'act':''}" onclick="setTab('wedstrijd')"><span class="ti">⚽</span>Wedstrijd</button>
     <button class="ltab ${tab==='opstelling'?'act':''}" onclick="setTab('opstelling')"><span class="ti">👥</span>Opstelling</button>
@@ -2310,13 +2475,13 @@ function renderDetail() {
     <div class="card">${match.players.map(p => playerRowHtml(p, mins[p.id], !p.onField, getGameTimeMs(match))).join('')}</div>
     <div class="sec">Events (${match.events.length})</div>
     <div class="card">${renderEventLog(match)}</div>
-    <div class="no-print">
+    ${(match.fromCloud && !isAdmin) ? '' : `<div class="no-print">
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
         <button class="btn btn-orgpale" onclick="modalEditPlayers()">✏️ Spelers bewerken</button>
         <button class="btn btn-pale" onclick="modalEditMatchInfo()">📋 Info bewerken</button>
       </div>
       <div class="danger"><button class="btn btn-red" onclick="confirmDelete()">🗑 Wedstrijd verwijderen</button></div>
-    </div>
+    </div>`}
   </div>`;
 }
 function confirmDelete() {
@@ -2430,6 +2595,7 @@ async function init() {
   db = await openDB();
   applyStoredTheme(); applyDark();
   migrateTeams();
+  cloudInit();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && view === 'live' && match) {
