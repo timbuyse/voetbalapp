@@ -164,6 +164,14 @@
     .elog li:last-child{border-bottom:none}
     .emin{font-weight:800;color:var(--txt2);font-size:12px;min-width:42px}
     .etxt{flex:1}
+    /* Event-log gegroepeerd per deel */
+    .qgroup{margin-bottom:4px}
+    .qgroup-head{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:#fff;background:var(--blk2);padding:7px 11px;border-radius:8px;margin:12px 0 2px}
+    .qgroup:first-child .qgroup-head{margin-top:0}
+    .qgroup-score{font-size:15px;font-weight:900;font-variant-numeric:tabular-nums;letter-spacing:1px}
+    .qgroup-score .us{color:var(--grn)}
+    .qgroup .elog li{padding:8px 4px}
+    .qgroup-empty{color:var(--txt2);font-size:13px;padding:8px 4px}
     /* Modal */
     .modal-ov{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:200;display:flex;align-items:flex-end}
     .modal{background:#fff;border-radius:22px 22px 0 0;padding:20px;width:100%;max-height:88vh;overflow-y:auto;padding-bottom:calc(20px + env(safe-area-inset-bottom))}
@@ -482,6 +490,12 @@ function getQElapsed(m) {
 function gameMin(ms) { return Math.floor(ms / 60000) + 1; }
 function playersOnField(m) { return m.players.filter(p => p.onField); }
 function playersOnBench(m) { return m.players.filter(p => !p.onField); }
+// Veldbezetting inclusief reeds ingeplande pauzewissels (voor het plannen van meerdere wissels op rij).
+function effectiveOnField(m) {
+  const on = new Set(m.players.filter(p => p.onField).map(p => p.id));
+  for (const s of (m.pendingSubs || [])) { on.delete(s.outId); on.add(s.inId); }
+  return m.players.filter(p => on.has(p.id));
+}
 
 function calcMinutes(m) {
   const mins = {}, totalMs = getGameTimeMs(m), entry = {};
@@ -509,7 +523,7 @@ function evtLabel(e, m) {
     case 'own_goal': return `⚽ Eigen doel (${pName(m,e.playerId)})`;
     case 'corner_us': { let s = '🚩 Hoekschop voor ons'; if (e.cornerType) s += ` · ${e.cornerType}`; if (e.playerId) s += ` · ${pName(m,e.playerId)}`; return s; }
     case 'corner_them': { let s = '🚩 Hoekschop tegen'; if (e.cornerType) s += ` · ${e.cornerType}`; return s; }
-    case 'substitution': return `🔄 ${pName(m,e.playerInId)} voor ${pName(m,e.playerOutId)}`;
+    case 'substitution': return `🔄 ${e.atBreak?'Pauzewissel: ':''}${pName(m,e.playerInId)} voor ${pName(m,e.playerOutId)}`;
     case 'yellow_card': return `🟨 Gele kaart ${pName(m,e.playerId)}`;
     case 'red_card': return `🟥 Rode kaart ${pName(m,e.playerId)}`;
     case 'penalty_us': return `🎯 Penalty voor ons${e.playerId?' · '+pName(m,e.playerId):''}${e.scored===true?' — GOAL':e.scored===false?' — gemist':''}`;
@@ -521,6 +535,32 @@ function evtLabel(e, m) {
     case 'quarter_end': return `⏹ ${pSing(m)} ${e.quarterNum} afgelopen`;
     default: return e.type;
   }
+}
+// Events gegroepeerd per deel (kwart/helft/...), met de tussenstand t.e.m. dat deel.
+// quarter_start / quarter_end worden weggelaten: de groepskop vervangt ze.
+function eventsByQuarter(m) {
+  const groups = [];
+  const qnums = [...new Set(m.events.map(e => e.quarterNum).filter(n => n != null))].sort((a, b) => a - b);
+  for (const qn of qnums) {
+    const list = m.events.filter(e => e.quarterNum === qn && !e.type.startsWith('quarter')).sort((a, b) => a.gameTimeMs - b.gameTimeMs);
+    groups.push({ qn, list, cum: scoreUpToQuarter(m, qn) });
+  }
+  const orphan = m.events.filter(e => e.quarterNum == null && !e.type.startsWith('quarter'));
+  if (orphan.length) groups.push({ qn: null, list: orphan, cum: null });
+  return groups;
+}
+// HTML-event-log voor het scherm (detail + live-log), met kwart-kop + tussenstand + verwijderknop.
+function renderEventLog(m) {
+  const groups = eventsByQuarter(m);
+  if (!groups.length) return '<p style="color:var(--txt2);font-size:14px">Geen events.</p>';
+  return groups.map(g => {
+    const head = g.qn == null ? 'Overig' : `${pSing(m)} ${g.qn}`;
+    const score = g.cum ? `<span class="qgroup-score"><span class="us">${g.cum.us}</span>–${g.cum.them}</span>` : '';
+    const items = g.list.length
+      ? g.list.map(e => `<li><span class="emin">${gameMin(e.gameTimeMs)}'</span><span class="etxt">${evtLabel(e, m)}</span><button class="evt-del no-print" onclick="confirmDeleteEvent('${e.id}')" title="Verwijderen">×</button></li>`).join('')
+      : '<li class="qgroup-empty">Geen events in dit deel.</li>';
+    return `<div class="qgroup"><div class="qgroup-head"><span>${head}</span>${score}</div><ul class="elog">${items}</ul></div>`;
+  }).join('');
 }
 
 // ===================== TIMER =====================
@@ -1367,6 +1407,11 @@ function renderLive() {
             ? `<button class="qbtn qbtn-end" onclick="endMatch()">🏁 Einde match</button>`
             : `<button class="qbtn qbtn-end" onclick="endPeriod()">⏹ Einde ${pSingLow(match)} ${qNum}</button>`) : ''}
       </div>` : ''}
+      ${canStartNext ? `<div class="card" style="padding:12px;border-left:4px solid var(--org)">
+        <div class="sec" style="margin-top:0">🔄 Pauzewissels · klaar voor ${pSingLow(match)} ${qNum+1}</div>
+        ${(match.pendingSubs&&match.pendingSubs.length) ? match.pendingSubs.map((s,i)=>`<div class="prow" style="padding:8px 0"><div style="flex:1;font-size:14px">🔄 <b>${esc(pName(match,s.inId))}</b> <span style="color:var(--txt2)">voor</span> ${esc(pName(match,s.outId))}</div><button class="evt-del" onclick="removePendingSub(${i})" title="Verwijderen">×</button></div>`).join('') : `<p style="color:var(--txt2);font-size:13px">Nog geen wissels ingepland. Voeg ze nu toe; ze worden automatisch doorgevoerd bij de start van ${pSingLow(match)} ${qNum+1}.</p>`}
+        <button class="btn btn-orgpale btn-sm" style="margin-top:8px;width:100%" onclick="modalSub()">➕ Pauzewissel toevoegen</button>
+      </div>` : ''}
       <div class="evtbtns">
         <div class="evtbtn eg ${dis}" onclick="modalGoal()"><span class="ei">⚽</span><span class="el">Goal</span></div>
         <div class="evtbtn ec ${dis}" onclick="modalCorner()"><span class="ei">🚩</span><span class="el">Hoekschop</span></div>
@@ -1390,9 +1435,8 @@ function renderLive() {
       </div>
       <button class="btn btn-orgpale" onclick="modalEditPlayers()">✏️ Spelers bewerken</button>`;
   } else {
-    const evts = [...match.events].reverse();
-    tabContent = (evts.length
-      ? `<div class="card"><ul class="elog">${evts.map(e => `<li><span class="emin">${pAbbr(match)}${e.quarterNum||'?'} ${gameMin(e.gameTimeMs)}'</span><span class="etxt">${evtLabel(e, match)}</span>${e.type.startsWith('quarter')?'':`<button class="evt-del" onclick="confirmDeleteEvent('${e.id}')" title="Verwijderen">×</button>`}</li>`).join('')}</ul></div>`
+    tabContent = (match.events.length
+      ? `<div class="card">${renderEventLog(match)}</div>`
       : `<div class="empty"><div class="ei">📋</div><p>Nog geen events.</p></div>`)
       + `<button class="btn btn-pale" style="margin-top:4px" onclick="modalEditMatchInfo()">📋 Wedstrijdinfo bewerken</button>`;
   }
@@ -1436,6 +1480,15 @@ async function startQuarter() {
   match.quarterStatus = 'running';
   match.quarters.push({ num: match.currentQuarter, startTime: Date.now(), endTime: null, totalPaused: 0, pausedAt: null });
   addEvent('quarter_start');
+  // Tijdens de pauze ingeplande wissels nu automatisch doorvoeren bij de start van het deel.
+  for (const s of (match.pendingSubs || [])) {
+    const pOut = match.players.find(p => p.id === s.outId), pIn = match.players.find(p => p.id === s.inId);
+    if (!pOut || !pIn) continue;
+    addEvent('substitution', { playerOutId: s.outId, playerInId: s.inId, atBreak: true });
+    pOut.onField = false;
+    pIn.onField = true; pIn.x = pOut.x; pIn.y = pOut.y; pIn.line = pOut.line;
+  }
+  match.pendingSubs = [];
   requestWake();
   await dbSave(match); startTimer(); render();
 }
@@ -1678,30 +1731,43 @@ async function confirmCorner() {
 // ===================== MODAL: SUB =====================
 let subOut = null, subIn = null;
 function modalSub() {
-  const on = playersOnField(match), mins = calcMinutes(match);
+  const between = match.quarterStatus === 'between';
+  const on = effectiveOnField(match), mins = calcMinutes(match);
+  const onIds = new Set(on.map(p => p.id));
   // bank gesorteerd op minst gespeeld, zodat eerlijke rotatie makkelijk is
-  const off = playersOnBench(match).slice().sort((a, b) => (mins[a.id]?.ms || 0) - (mins[b.id]?.ms || 0));
+  const off = match.players.filter(p => !onIds.has(p.id)).slice().sort((a, b) => (mins[a.id]?.ms || 0) - (mins[b.id]?.ms || 0));
   const minMs = off.length ? (mins[off[0].id]?.ms || 0) : 0;
   const mm = id => Math.floor((mins[id]?.ms || 0) / 60000);
   subOut = null; subIn = null;
-  openModal(`<h3>🔄 Wissel</h3>
+  const title = between ? `🔄 Pauzewissel · ${pSing(match)} ${match.currentQuarter + 1}` : '🔄 Wissel';
+  const cta = between ? '✓ Pauzewissel inplannen' : '✓ Wissel doorvoeren';
+  const hint = between ? '<p style="text-align:center;color:var(--txt2);font-size:13px;margin-bottom:12px">Wordt automatisch doorgevoerd bij de start van het volgende deel.</p>' : '';
+  openModal(`<h3>${title}</h3>${hint}
     <div class="sec" style="margin-top:0">Wie gaat ERAF?</div>
     <div id="sub-out">${on.map(p=>`<div class="mopt" onclick="selectSubOut('${p.id}',this)"><div class="mopt-num">${p.number||'?'}</div>${esc(p.name)} <span style="color:var(--txt2);font-size:13px;margin-left:auto">${mm(p.id)}'</span></div>`).join('')}</div>
     <div class="sec">Wie komt ERIN? <span style="color:var(--txt2);font-weight:400;text-transform:none">(minst gespeeld bovenaan)</span></div>
     <div id="sub-in">${off.length ? off.map(p=>{ const low = (mins[p.id]?.ms||0)===minMs; return `<div class="mopt" onclick="selectSubIn('${p.id}',this)"><div class="mopt-num mopt-num-off">${p.number||'?'}</div>${esc(p.name)} ${low?'<span style="color:var(--org);font-size:12px;font-weight:700">💤 minst</span>':''}<span class="${low?'pmins-low':''}" style="color:var(--txt2);font-size:13px;margin-left:auto">${mm(p.id)}'</span></div>`; }).join('') : '<p style="color:var(--txt2);font-size:14px;padding:8px 0">Geen spelers op de bank.</p>'}</div>
-    <button class="btn btn-green" style="margin-top:12px" onclick="confirmSub()">✓ Wissel doorvoeren</button>
+    <button class="btn btn-green" style="margin-top:12px" onclick="confirmSub()">${cta}</button>
     <button class="btn btn-gray" style="margin-top:8px" onclick="closeModal()">Annuleren</button>`);
 }
 function selectSubOut(id, el) { subOut = id; document.querySelectorAll('#sub-out .mopt').forEach(o => o.classList.remove('sel')); el.classList.add('sel'); }
 function selectSubIn(id, el) { subIn = id; document.querySelectorAll('#sub-in .mopt').forEach(o => o.classList.remove('sel')); el.classList.add('sel'); }
 async function confirmSub() {
   if (!subOut || !subIn) { alert('Kies wie eraf gaat en wie erin komt.'); return; }
+  // Tijdens de pauze: wissel inplannen i.p.v. meteen doorvoeren.
+  if (match.quarterStatus === 'between') {
+    match.pendingSubs = match.pendingSubs || [];
+    match.pendingSubs.push({ outId: subOut, inId: subIn });
+    await dbSave(match); closeModal(); render();
+    return;
+  }
   addEvent('substitution', { playerOutId: subOut, playerInId: subIn });
   const pOut = match.players.find(p => p.id === subOut), pIn = match.players.find(p => p.id === subIn);
   if (pOut) pOut.onField = false;
   if (pIn) { pIn.onField = true; if (pOut) { pIn.x = pOut.x; pIn.y = pOut.y; pIn.line = pOut.line; } }
   await dbSave(match); closeModal(); render();
 }
+async function removePendingSub(i) { if (match.pendingSubs) match.pendingSubs.splice(i, 1); await dbSave(match); render(); }
 
 // ===================== MODAL: CARD =====================
 function modalCard(color) {
@@ -1830,7 +1896,7 @@ async function confirmFreekick() {
 // ===================== DETAIL VIEW =====================
 function renderDetail() {
   if (!match) return '<div class="content"><p>Niet gevonden.</p></div>';
-  const mins = calcMinutes(match), evts = [...match.events].reverse();
+  const mins = calcMinutes(match);
   const qSummary = match.quarters.map(q => {
     const dur = q.endTime ? q.endTime - q.startTime - (q.totalPaused||0) : getQElapsed(match);
     const goals = match.events.filter(e => (e.type==='goal_us'||e.type==='goal_them'||e.type==='own_goal'||(e.type.startsWith('penalty')&&e.scored)) && e.quarterNum === q.num);
@@ -1873,7 +1939,7 @@ function renderDetail() {
     <div class="sec">Speelminuten</div>
     <div class="card">${match.players.map(p => playerRowHtml(p, mins[p.id], !p.onField)).join('')}</div>
     <div class="sec">Events (${match.events.length})</div>
-    <div class="card">${evts.length ? `<ul class="elog">${evts.map(e=>`<li><span class="emin">${pAbbr(match)}${e.quarterNum||'?'} ${gameMin(e.gameTimeMs)}'</span><span class="etxt">${evtLabel(e,match)}</span>${e.type.startsWith('quarter')?'':`<button class="evt-del no-print" onclick="confirmDeleteEvent('${e.id}')" title="Verwijderen">×</button>`}</li>`).join('')}</ul>` : '<p style="color:var(--txt2);font-size:14px">Geen events.</p>'}</div>
+    <div class="card">${renderEventLog(match)}</div>
     <div class="no-print">
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px">
         <button class="btn btn-orgpale" onclick="modalEditPlayers()">✏️ Spelers bewerken</button>
@@ -1911,7 +1977,20 @@ function exportPDF() {
     return `<tr><td>${p.number||''}</td><td>${esc(p.name)}</td><td>${p.line}${p.posNum?' ('+p.posNum+')':''}</td><td style="text-align:center">${min}'</td><td style="text-align:center">${g||''}</td><td style="text-align:center">${a||''}</td><td style="text-align:center">${yc?'🟨'.repeat(yc):''}${rc?'🟥':''}</td></tr>`;
   }).join('');
 
-  const evtRows = evts.map(e => `<tr><td>${pAbbr(m)}${e.quarterNum||'?'} ${gameMin(e.gameTimeMs)}'</td><td>${evtLabel(e,m)}</td></tr>`).join('');
+  const infoBits = [m.formation, m.competition, m.matchday && ('speeldag ' + m.matchday), m.trainer && ('trainer ' + m.trainer), m.responsible && ('afgevaardigde ' + m.responsible), m.referee && ('ref. ' + m.referee), m.jersey && ('trui ' + m.jersey), m.weather, m.captainId && ('kapitein ' + pName(m, m.captainId))].filter(Boolean);
+
+  const perQuarterRows = m.quarters.map(q => {
+    const dur = q.endTime ? q.endTime - q.startTime - (q.totalPaused || 0) : 0;
+    const cum = scoreUpToQuarter(m, q.num);
+    const gs = m.events.filter(e => (e.type === 'goal_us' || e.type === 'goal_them' || e.type === 'own_goal' || (e.type.startsWith('penalty') && e.scored)) && e.quarterNum === q.num).map(e => evtLabel(e, m)).join('<br>') || '–';
+    return `<tr><td><b>${pAbbr(m)}${q.num}</b></td><td style="font-weight:900;white-space:nowrap"><span style="color:#1f9d4d">${cum.us}</span> – ${cum.them}</td><td style="white-space:nowrap">${Math.round(dur / 60000)} min</td><td>${gs}</td></tr>`;
+  }).join('');
+
+  const timelineRows = eventsByQuarter(m).map(g => {
+    const head = g.qn == null ? 'Overig' : `${pSing(m)} ${g.qn}${g.cum ? ` — tussenstand ${g.cum.us}–${g.cum.them}` : ''}`;
+    const rows = g.list.length ? g.list.map(e => `<tr><td style="white-space:nowrap">${gameMin(e.gameTimeMs)}'</td><td>${evtLabel(e, m)}</td></tr>`).join('') : `<tr><td></td><td style="color:#9ca3af">Geen events</td></tr>`;
+    return `<tr><td colspan="2" style="background:#f1f3f5;font-weight:700;border-top:2px solid #d1d5db">${head}</td></tr>${rows}`;
+  }).join('');
 
   const html = `<!DOCTYPE html><html lang="nl"><head><meta charset="utf-8"><title>${esc(tName(m))} vs ${esc(m.opponent)}</title>
     <style>
@@ -1934,10 +2013,13 @@ function exportPDF() {
     <div class="top"><img src="${getClubLogo()}" style="width:54px;height:54px;object-fit:contain;border-radius:10px;background:${(JSON.parse(localStorage.getItem('voetbal_theme')||'null')||GENERIC_THEME).dark}">
       <div><h1>${esc(tName(m))} <span style="color:#6b7280;font-weight:400">vs</span> ${esc(m.opponent)}</h1>
       <div class="sub">${matchWhen(m)} · ${m.location} · ${m.matchType} · ${m.numQuarters} ${pPlural(m)} × ${m.quarterDuration} min</div>
-      ${[m.formation,m.competition,m.matchday&&('speeldag '+m.matchday),m.referee&&('ref. '+m.referee),m.jersey&&('trui '+m.jersey),m.weather,m.captainId&&('kapitein '+pName(m,m.captainId))].filter(Boolean).length?`<div class="sub">${[m.formation,m.competition,m.matchday&&('speeldag '+m.matchday),m.referee&&('ref. '+m.referee),m.jersey&&('trui '+m.jersey),m.weather,m.captainId&&('kapitein '+pName(m,m.captainId))].filter(Boolean).map(esc).join(' · ')}</div>`:''}</div>
+      ${infoBits.length?`<div class="sub">${infoBits.map(esc).join(' · ')}</div>`:''}</div>
     </div>
     <div class="score"><span class="us">${m.scoreUs}</span> – ${m.scoreThem}</div>
     ${m.motmId?`<p style="text-align:center;font-weight:700;margin:-8px 0 10px">⭐ Man van de match: ${esc(pName(m,m.motmId))}</p>`:''}
+    ${m.quarters.length?`<h2>Tussenstand per ${pSingLow(m)}</h2>
+    <table><thead><tr><th>${pSing(m)}</th><th>Tussenstand</th><th>Duur</th><th>Doelpunten</th></tr></thead>
+    <tbody>${perQuarterRows}</tbody></table>`:''}
     <h2>Wedstrijdstatistieken</h2>
     <div class="stats">
       <div>Hoekschoppen: <b>${stat('corner_us')}</b> – ${stat('corner_them')}</div>
@@ -1951,7 +2033,7 @@ function exportPDF() {
     ${m.players.some(p=>p.note) ? `<h2>Notities per speler</h2>${m.players.filter(p=>p.note).map(p=>`<div style="font-size:13px;padding:3px 0"><b>${esc(p.name)}:</b> ${esc(p.note)}</div>`).join('')}` : ''}
     ${m.notes ? `<h2>Notities</h2><p style="white-space:pre-wrap;font-size:13px;line-height:1.5">${esc(m.notes)}</p>` : ''}
     <h2>Volledige tijdlijn (${evts.length} events)</h2>
-    <table><tbody>${evtRows||'<tr><td>Geen events</td></tr>'}</tbody></table>
+    <table><tbody>${timelineRows||'<tr><td>Geen events</td></tr>'}</tbody></table>
     <p style="margin-top:30px;color:#9ca3af;font-size:11px;text-align:center">${esc(getClubName())} · app created by Tim Buyse</p>
     <script>window.onload=function(){setTimeout(function(){window.print();},300);};<\/script>
     </body></html>`;
