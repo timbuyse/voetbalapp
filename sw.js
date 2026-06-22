@@ -1,4 +1,4 @@
-const CACHE = 'voetbal-v13';
+const CACHE = 'voetbal-v14';
 const ASSETS = ['./', './index.html', './manifest.json', './icon.svg', './logo-default.svg'];
 
 self.addEventListener('install', e => {
@@ -10,13 +10,36 @@ self.addEventListener('activate', e => {
   e.waitUntil(
     caches.keys().then(keys =>
       Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))
-    )
+    ).then(() => self.clients.claim())
   );
-  self.clients.claim();
 });
 
 self.addEventListener('fetch', e => {
+  const req = e.request;
+  if (req.method !== 'GET') return;
+  const url = new URL(req.url);
+  const isDoc = req.mode === 'navigate' || req.destination === 'document' || url.pathname.endsWith('/') || url.pathname.endsWith('index.html');
+
+  if (isDoc) {
+    // Pagina/app-shell: netwerk-eerst zodat nieuwe versies meteen verschijnen.
+    e.respondWith(
+      fetch(req).then(res => {
+        const copy = res.clone();
+        caches.open(CACHE).then(c => c.put('./index.html', copy));
+        return res;
+      }).catch(() => caches.match(req).then(c => c || caches.match('./index.html')))
+    );
+    return;
+  }
+
+  // Overige bestanden: cache-eerst, maar op de achtergrond verversen (stale-while-revalidate).
   e.respondWith(
-    caches.match(e.request).then(cached => cached || fetch(e.request).catch(() => cached))
+    caches.match(req).then(cached => {
+      const network = fetch(req).then(res => {
+        caches.open(CACHE).then(c => c.put(req, res.clone()));
+        return res;
+      }).catch(() => cached);
+      return cached || network;
+    })
   );
 });
