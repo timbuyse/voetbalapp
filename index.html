@@ -285,7 +285,7 @@
       body{background:#fff}
       .content{max-width:100%;padding:0}
     }
-    .cloud-chip{cursor:pointer;font-size:12px;font-weight:700;padding:5px 10px;border-radius:999px;margin-left:auto;white-space:nowrap;user-select:none}
+    .cloud-chip{cursor:pointer;font-size:12px;font-weight:700;padding:5px 10px;border-radius:999px;margin-left:auto;margin-right:42px;white-space:nowrap;user-select:none}
     .cloud-chip.admin{background:#1f9d55;color:#fff}
     .cloud-chip.viewer{background:rgba(255,255,255,.22);color:#fff;border:1px solid rgba(255,255,255,.45)}
     .viewer-banner{background:#eef4ff;border:1px solid #c7dafc;color:#1d4ed8;border-radius:10px;padding:10px 12px;font-size:13px;font-weight:600;text-align:center;margin-bottom:12px}
@@ -605,6 +605,9 @@ function cloudRefreshUI() {
 
 // ---- login / status ----
 function canEditMatch() { return !match || !match.fromCloud || isAdmin; }
+// Mag deze gebruiker nieuwe dingen aanmaken/bewerken? Zonder cloud = gewoon lokaal (alles mag).
+// Met cloud actief: enkel ingelogde beheerders. Kijkers zijn alleen-lezen.
+function canManage() { return !cloudReady || isAdmin; }
 function updateCloudChip() {
   const el = document.getElementById('cloud-chip');
   if (!el) return;
@@ -959,7 +962,7 @@ async function loadHome() {
   if (homeFilter !== 'all') recent = recent.filter(m => m.teamName === homeFilter);
   recent = recent.slice(0, 1);
   const recentHtml = recent.length ? `<div class="sec">🕑 Laatst gespeeld</div>${recent.map(matchItemHtml).join('')}` : '';
-  const newBtn = `<button class="btn btn-green" onclick="newMatch()" style="margin-bottom:14px">⚽ + Nieuwe wedstrijd</button>`;
+  const newBtn = canManage() ? `<button class="btn btn-green" onclick="newMatch()" style="margin-bottom:14px">⚽ + Nieuwe wedstrijd</button>` : '';
   const lastB = localStorage.getItem('voetbal_last_backup');
   const ageDays = lastB ? (Date.now() - +lastB) / 864e5 : Infinity;
   const backupBanner = all.length && ageDays > 14 ? `<div class="backup-banner"><span>💾 ${lastB ? 'Je laatste back-up is meer dan 2 weken oud.' : 'Maak een back-up zodat je niets verliest.'}</span><button class="btn btn-org btn-sm" onclick="go('settings')">Back-up</button></div>` : '';
@@ -991,7 +994,7 @@ async function loadMatches() {
     ? sec('🔴 Live', live) + sec('🗓 Geplande wedstrijden', planned) + sec('✅ Gespeelde wedstrijden', done)
     : `<div class="empty"><div class="ei">🔍</div><p>Geen wedstrijden voor deze ploeg.</p></div>`;
   const searchBar = all.length > 6 ? `<div class="searchbar"><input id="home-search" type="search" placeholder="🔍 Zoek op tegenstander, ploeg, plaats…" oninput="filterHomeItems(this.value)" value="${esc(homeSearch)}"></div>` : '';
-  const newBtn = `<button class="btn btn-green" onclick="newMatch()" style="margin-bottom:12px">⚽ + Nieuwe wedstrijd</button>`;
+  const newBtn = canManage() ? `<button class="btn btn-green" onclick="newMatch()" style="margin-bottom:12px">⚽ + Nieuwe wedstrijd</button>` : '';
   el.innerHTML = newBtn + filterBar + searchBar + `<div id="match-list">${items}</div>`;
   if (homeSearch) filterHomeItems(homeSearch);
 }
@@ -1265,12 +1268,12 @@ function renderTeamsList() {
   const teams = getTeamsV2();
   return `<div class="hdr"><button class="back" onclick="go('home')">‹</button><h1>👥 Ploegen</h1></div>
   <div class="content">
-    ${teams.length ? teams.map(t => `<div class="team-row" onclick="openTeam('${t.id}')"><div><div class="tn">${esc(t.name)}</div><div class="tc">${t.players.length} spelers</div></div><span style="margin-left:auto;color:var(--txt2);font-size:22px">›</span></div>`).join('') : '<div class="empty"><div class="ei">👥</div><p>Nog geen ploegen.<br>Maak je eerste ploeg aan.</p></div>'}
-    <button class="btn btn-green" style="margin-top:8px" onclick="newTeam()">+ Nieuwe ploeg</button>
+    ${teams.length ? teams.map(t => `<div class="team-row" ${canManage() ? `onclick="openTeam('${t.id}')"` : 'style="cursor:default"'}><div><div class="tn">${esc(t.name)}</div><div class="tc">${t.players.length} spelers</div></div>${canManage() ? '<span style="margin-left:auto;color:var(--txt2);font-size:22px">›</span>' : ''}</div>`).join('') : '<div class="empty"><div class="ei">👥</div><p>Nog geen ploegen.</p></div>'}
+    ${canManage() ? '<button class="btn btn-green" style="margin-top:8px" onclick="newTeam()">+ Nieuwe ploeg</button>' : '<div class="viewer-banner" style="margin-top:8px">👁 Je kijkt mee — ploegen worden door de beheerder beheerd</div>'}
   </div>`;
 }
-function newTeam() { editingTeam = { id: uid(), name: '', responsible: '', trainers: [], players: [], isNew: true }; go('teamEdit'); }
-function openTeam(id) { const t = teamById(id); if (!t) return; editingTeam = JSON.parse(JSON.stringify(t)); go('teamEdit'); }
+function newTeam() { if (!canManage()) return; editingTeam = { id: uid(), name: '', responsible: '', trainers: [], players: [], isNew: true }; go('teamEdit'); }
+function openTeam(id) { if (!canManage()) return; const t = teamById(id); if (!t) return; editingTeam = JSON.parse(JSON.stringify(t)); go('teamEdit'); }
 function closeTeamEdit() { editingTeam = null; go('teams'); }
 function renderTeamEdit() {
   if (!editingTeam) return '<div class="content"><p>Geen ploeg.</p></div>';
@@ -2613,7 +2616,7 @@ views.teams = renderTeamsList;
 views.teamEdit = renderTeamEdit;
 views.prep = renderPrep;
 views.new = renderNew;
-function newMatch() { startWizard(); go('new'); }
+function newMatch() { if (!canManage()) return; startWizard(); go('new'); }
 init();
 </script>
 </body>
