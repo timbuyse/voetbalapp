@@ -225,6 +225,18 @@
     .fairbar.low span{background:var(--rd)}
     .evt-edit{background:var(--grnp);border:none;color:var(--grn2);width:28px;height:28px;border-radius:7px;font-size:14px;cursor:pointer;flex-shrink:0}
     .searchbar input{width:100%;padding:11px;border:2px solid var(--bdr);border-radius:10px;font-size:15px;background:var(--card);color:var(--txt);-webkit-appearance:none;margin-bottom:10px}
+    /* Home dashboard-tegels */
+    .home-tiles{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:8px}
+    .tile{background:var(--card);border:none;border-radius:14px;box-shadow:var(--shadow);padding:15px 6px;display:flex;flex-direction:column;align-items:center;gap:5px;cursor:pointer;color:var(--txt);border-bottom:3px solid var(--grn)}
+    .tile:active{transform:scale(.96)}
+    .tile .ti{font-size:27px;line-height:1}
+    .tile .tl{font-size:13px;font-weight:800}
+    .tile .tc{font-size:11px;color:var(--txt2);font-weight:600}
+    .tile.tile-org{border-bottom-color:var(--org)}
+    .tile.tile-dark{border-bottom-color:var(--blk2)}
+    /* Live: speeltijd-nudge + keeperkeuze */
+    .nudge{background:var(--orgp);color:var(--org2);border:1px solid var(--orgb);border-radius:12px;padding:11px 13px;margin-bottom:12px;font-size:13px;font-weight:600;line-height:1.4}
+    .keeper-chip{display:inline-flex;align-items:center;gap:6px;background:var(--orgp);color:var(--org2);border:2px solid var(--orgb);border-radius:20px;padding:6px 14px;font-size:13px;font-weight:700;cursor:pointer}
     /* Wizard */
     .steps{display:flex;gap:6px;padding:10px 16px 0;max-width:600px;margin:0 auto}
     .step-pill{flex:1;height:6px;border-radius:3px;background:var(--bdr)}
@@ -429,6 +441,7 @@ function recomputeOnField(m) {
   for (const e of [...m.events].sort((a, b) => a.gameTimeMs - b.gameTimeMs)) {
     if (e.type === 'substitution') { if (e.playerOutId) on[e.playerOutId] = false; if (e.playerInId) on[e.playerInId] = true; }
     if (e.type === 'red_card' && e.playerId) on[e.playerId] = false;
+    if (e.type === 'injury' && e.leavesField && e.playerId) on[e.playerId] = false;
   }
   m.players.forEach(p => p.onField = !!on[p.id]);
 }
@@ -527,6 +540,10 @@ function calcMinutes(m) {
       entry[e.playerInId] = e.gameTimeMs;
     }
     if (e.type === 'red_card' && entry[e.playerId] !== undefined) {
+      mins[e.playerId].ms += e.gameTimeMs - entry[e.playerId]; delete entry[e.playerId];
+    }
+    // Blessure waarbij de speler het veld verlaat zonder directe wissel: stop de teller.
+    if (e.type === 'injury' && e.leavesField && entry[e.playerId] !== undefined) {
       mins[e.playerId].ms += e.gameTimeMs - entry[e.playerId]; delete entry[e.playerId];
     }
   }
@@ -710,9 +727,15 @@ function pitchSVG(m, players) {
 const views = {
   home: () => {
     loadHome();
-    return `<div class="hdr hdr-home"><img src="${getClubLogo()}" class="hdr-crest" alt="logo"><span class="hdr-clubname">Football Score Tracking App</span><button class="hdr-gear" onclick="go('settings')" title="Instellingen">⚙</button></div>
+    return `<div class="hdr hdr-home"><img src="${getClubLogo()}" class="hdr-crest" alt="logo"><span class="hdr-clubname">${esc(getClubName())}</span><button class="hdr-gear" onclick="go('settings')" title="Instellingen">⚙</button></div>
       <div class="content" id="home-content"><div class="empty"><div class="ei">⏳</div><p>Laden...</p></div></div>
       <div class="credit">App created by <b>Tim Buyse</b></div>
+      <button class="fab" onclick="newMatch()">+</button>`;
+  },
+  matches: () => {
+    loadMatches();
+    return `<div class="hdr"><button class="back" onclick="go('home')">‹</button><h1>⚽ Wedstrijden</h1></div>
+      <div class="content" id="matches-content"><div class="empty"><div class="ei">⏳</div><p>Laden...</p></div></div>
       <button class="fab" onclick="newMatch()">+</button>`;
   },
   setup: () => { pendingLogo = mapStoredLogo() || 'DEFAULT'; pendingTheme = null; return renderSettings(true); },
@@ -723,14 +746,68 @@ const views = {
   stats: () => { statsFilter = homeFilter; loadStats(); return `<div class="hdr"><button class="back" onclick="go('home')">‹</button><h1>📊 Statistieken</h1></div><div class="content" id="stats-content"><div class="empty"><div class="ei">⏳</div></div></div>`; },
 };
 let homeFilter = 'all';
-function setHomeFilter(v) { homeFilter = v; loadHome(); }
+function setHomeFilter(v) { homeFilter = v; if (view === 'matches') loadMatches(); else loadHome(); }
+// Eén wedstrijd-kaartje (gebruikt op het dashboard én in de volledige lijst).
+function matchItemHtml(m) {
+  const st = m.status, target = st === 'live' ? 'live' : st === 'planned' ? 'prep' : 'detail';
+  const border = st === 'live' ? 'live-border' : st === 'planned' ? 'plan-border' : '';
+  const badge = st === 'live' ? '<span class="badge badge-live">🔴 Live</span>' : st === 'planned' ? '<span class="badge badge-plan">🗓 Gepland</span>' : '<span class="badge badge-done">✅ Gespeeld</span>';
+  const right = st === 'planned' ? `<div style="text-align:right;font-size:13px;color:var(--txt2);font-weight:600">${m.time || ''}</div>` : `<div class="mi-score">${m.scoreUs}–${m.scoreThem}</div>`;
+  const sdata = `${m.opponent||''} ${m.teamName||''} ${m.location||''} ${m.competition||''} ${matchWhen(m)}`.toLowerCase();
+  return `<div class="match-item ${border}" data-s="${esc(sdata)}" onclick="go('${target}','${m.id}')">
+    <div class="mi-info">
+      <div class="mi-opp">${esc(m.opponent)}</div>
+      <div class="mi-date">${m.teamName?'<b>'+esc(m.teamName)+'</b> · ':''}${matchWhen(m)} · ${m.location}</div>
+      ${badge}<span class="badge badge-type">${m.matchType||''}</span>
+    </div>${right}</div>`;
+}
+// HOME = dashboard: tegels + komende wedstrijd (filterbaar per ploeg) + recent.
 async function loadHome() {
   const all = await dbAll();
   const el = document.getElementById('home-content');
   if (!el) return;
+  const teamCount = getTeamsV2().length;
+  const teams = [...new Set(all.map(m => m.teamName).filter(Boolean))].sort();
+  if (homeFilter !== 'all' && !teams.includes(homeFilter)) homeFilter = 'all';
+  const tiles = `<div class="home-tiles">
+    <button class="tile" onclick="go('matches')"><span class="ti">⚽</span><span class="tl">Wedstrijden</span><span class="tc">${all.length}</span></button>
+    <button class="tile tile-org" onclick="go('teams')"><span class="ti">👥</span><span class="tl">Ploegen</span><span class="tc">${teamCount} ${teamCount===1?'ploeg':'ploegen'}</span></button>
+    <button class="tile tile-dark" onclick="go('stats')"><span class="ti">📊</span><span class="tl">Statistieken</span><span class="tc">bekijk</span></button>
+  </div>`;
+  if (!all.length && !teamCount) {
+    el.innerHTML = tiles + `<div class="empty"><div class="ei">⚽</div><p>Welkom! Maak eerst een <b>ploeg</b> aan,<br>tik dan <b>+</b> voor je eerste wedstrijd.</p></div>`;
+    return;
+  }
+  const filterBar = teams.length > 1 ? `<div class="filterbar">
+    <select onchange="setHomeFilter(this.value)">
+      <option value="all" ${homeFilter==='all'?'selected':''}>Alle ploegen</option>
+      ${teams.map(t => `<option value="${esc(t)}" ${homeFilter===t?'selected':''}>${esc(t)}</option>`).join('')}
+    </select></div>` : '';
+  // Komende wedstrijden (live of gepland), gefilterd per ploeg, vroegste eerst.
+  let upcoming = all.filter(m => m.status === 'live' || m.status === 'planned');
+  if (homeFilter !== 'all') upcoming = upcoming.filter(m => m.teamName === homeFilter);
+  upcoming.sort((a, b) => { const r = (a.status === 'live' ? 0 : 1) - (b.status === 'live' ? 0 : 1); if (r) return r; return (a.date || '').localeCompare(b.date || ''); });
+  upcoming = upcoming.slice(0, 5);
+  const upcomingHtml = upcoming.length
+    ? upcoming.map(matchItemHtml).join('')
+    : `<div class="empty" style="padding:24px 16px"><div class="ei">📅</div><p>Geen geplande wedstrijd${homeFilter!=='all'?' voor deze ploeg':''}.<br>Tik <b>+</b> om er een te plannen.</p></div>`;
+  // Recent gespeeld (zelfde filter).
+  let recent = all.filter(m => m.status === 'done');
+  if (homeFilter !== 'all') recent = recent.filter(m => m.teamName === homeFilter);
+  recent = recent.slice(0, 2);
+  const recentHtml = recent.length ? `<div class="sec">🕑 Recent gespeeld</div>${recent.map(matchItemHtml).join('')}` : '';
+  const lastB = localStorage.getItem('voetbal_last_backup');
+  const ageDays = lastB ? (Date.now() - +lastB) / 864e5 : Infinity;
+  const backupBanner = all.length && ageDays > 14 ? `<div class="backup-banner"><span>💾 ${lastB ? 'Je laatste back-up is meer dan 2 weken oud.' : 'Maak een back-up zodat je niets verliest.'}</span><button class="btn btn-org btn-sm" onclick="go('settings')">Back-up</button></div>` : '';
+  el.innerHTML = tiles + backupBanner + `<div class="sec">📅 Komende wedstrijd</div>` + filterBar + upcomingHtml + recentHtml;
+}
+// WEDSTRIJDEN = volledige lijst met filter + zoeken.
+async function loadMatches() {
+  const all = await dbAll();
+  const el = document.getElementById('matches-content');
+  if (!el) return;
   if (!all.length) {
-    el.innerHTML = `<button class="btn btn-pale btn-sm" style="width:100%;margin-bottom:10px" onclick="go('teams')">👥 Ploegen beheren</button>
-      <div class="empty"><div class="ei">⚽</div><p>Nog geen wedstrijden.<br>Maak eerst een ploeg aan, tik dan <b>+</b>.</p></div>`;
+    el.innerHTML = `<div class="empty"><div class="ei">⚽</div><p>Nog geen wedstrijden.<br>Maak eerst een ploeg aan, tik dan <b>+</b>.</p></div>`;
     return;
   }
   const teams = [...new Set(all.map(m => m.teamName).filter(Boolean))].sort();
@@ -743,42 +820,9 @@ async function loadHome() {
       <option value="all" ${homeFilter==='all'?'selected':''}>Alle ploegen (${all.length})</option>
       ${teams.map(t => `<option value="${esc(t)}" ${homeFilter===t?'selected':''}>${esc(t)} (${all.filter(m=>m.teamName===t).length})</option>`).join('')}
     </select></div>` : '';
-  const itemHtml = m => {
-    const st = m.status, target = st === 'live' ? 'live' : st === 'planned' ? 'prep' : 'detail';
-    const border = st === 'live' ? 'live-border' : st === 'planned' ? 'plan-border' : '';
-    const badge = st === 'live' ? '<span class="badge badge-live">🔴 Live</span>' : st === 'planned' ? '<span class="badge badge-plan">🗓 Gepland</span>' : '<span class="badge badge-done">✅ Gespeeld</span>';
-    const right = st === 'planned' ? `<div style="text-align:right;font-size:13px;color:var(--txt2);font-weight:600">${m.time || ''}</div>` : `<div class="mi-score">${m.scoreUs}–${m.scoreThem}</div>`;
-    const sdata = `${m.opponent||''} ${m.teamName||''} ${m.location||''} ${m.competition||''} ${matchWhen(m)}`.toLowerCase();
-    return `<div class="match-item ${border}" data-s="${esc(sdata)}" onclick="go('${target}','${m.id}')">
-      <div class="mi-info">
-        <div class="mi-opp">${esc(m.opponent)}</div>
-        <div class="mi-date">${m.teamName?'<b>'+esc(m.teamName)+'</b> · ':''}${matchWhen(m)} · ${m.location}</div>
-        ${badge}<span class="badge badge-type">${m.matchType||''}</span>
-      </div>${right}</div>`;
-  };
-  const items = list.length ? list.map(itemHtml).join('') : `<div class="empty"><div class="ei">🔍</div><p>Geen wedstrijden voor deze ploeg.</p></div>`;
-  const topBtns = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
-    <button class="btn btn-pale btn-sm" onclick="go('teams')">👥 Ploegen</button>
-    <button class="btn btn-pale btn-sm" onclick="go('stats')">📊 Statistieken</button></div>`;
-  const today = new Date().toISOString().split('T')[0];
-  const todayMatches = all.filter(m => m.date === today && (m.status === 'planned' || m.status === 'live'));
-  const todayBanner = todayMatches.length ? `<div class="today-banner">
-    <h3>📅 Vandaag</h3>
-    ${todayMatches.map(m => `<div class="today-match">
-      <div class="tm-info">
-        <div class="tm-opp">${esc(m.teamName ? m.teamName + ' · ' : '')}vs ${esc(m.opponent)}</div>
-        <div class="tm-sub">${m.time || ''} · ${m.location} · ${m.matchType}</div>
-      </div>
-      ${m.status === 'live'
-        ? `<button class="hdr-btn" onclick="go('live','${m.id}')">🔴 Live</button>`
-        : `<button class="hdr-btn" onclick="go('prep','${m.id}')">▶ Starten</button>`}
-    </div>`).join('')}
-  </div>` : '';
-  const lastB = localStorage.getItem('voetbal_last_backup');
-  const ageDays = lastB ? (Date.now() - +lastB) / 864e5 : Infinity;
-  const backupBanner = all.length && ageDays > 14 ? `<div class="backup-banner"><span>💾 ${lastB ? 'Je laatste back-up is meer dan 2 weken oud.' : 'Maak een back-up zodat je niets verliest.'}</span><button class="btn btn-org btn-sm" onclick="go('settings')">Back-up</button></div>` : '';
+  const items = list.length ? list.map(matchItemHtml).join('') : `<div class="empty"><div class="ei">🔍</div><p>Geen wedstrijden voor deze ploeg.</p></div>`;
   const searchBar = all.length > 6 ? `<div class="searchbar"><input id="home-search" type="search" placeholder="🔍 Zoek op tegenstander, ploeg, plaats…" oninput="filterHomeItems(this.value)" value="${esc(homeSearch)}"></div>` : '';
-  el.innerHTML = topBtns + backupBanner + todayBanner + filterBar + searchBar + `<div id="match-list">${items}</div>`;
+  el.innerHTML = filterBar + searchBar + `<div id="match-list">${items}</div>`;
   if (homeSearch) filterHomeItems(homeSearch);
 }
 let homeSearch = '';
@@ -828,7 +872,7 @@ async function loadStats() {
   if (!list.length) { el.innerHTML = filterBar + `<div class="empty"><div class="ei">📊</div><p>Nog geen wedstrijden.</p></div>`; return; }
   let w = 0, d = 0, l = 0, gf = 0, ga = 0, cleanSheets = 0;
   const pl = {};
-  const getp = (name, num) => { const k = (name || 'Speler').trim(); return pl[k] || (pl[k] = { name: k, number: num || '', goals: 0, assists: 0, ms: 0, yc: 0, rc: 0, mp: 0, cs: 0 }); };
+  const getp = (name, num) => { const k = (name || 'Speler').trim(); return pl[k] || (pl[k] = { name: k, number: num || '', goals: 0, assists: 0, ms: 0, yc: 0, rc: 0, mp: 0, cs: 0, squad: 0, absent: 0, lines: {} }); };
   for (const m of list) {
     gf += m.scoreUs; ga += m.scoreThem;
     if (m.scoreUs > m.scoreThem) w++; else if (m.scoreUs < m.scoreThem) l++; else d++;
@@ -836,9 +880,12 @@ async function loadStats() {
     const mins = calcMinutes(m);
     for (const p of (m.players || [])) {
       const r = getp(p.name, p.number); const ms = mins[p.id] ? mins[p.id].ms : 0;
-      if (ms > 0) r.mp++; r.ms += ms;
+      r.squad++;
+      if (ms > 0) { r.mp++; r.lines[p.line] = (r.lines[p.line] || 0) + 1; }
+      r.ms += ms;
       if (ms > 0 && p.line === 'Doel' && m.scoreThem === 0) r.cs++;  // clean sheet voor de keeper
     }
+    for (const name of (m.absentPlayers || [])) { const r = getp(name); r.absent++; }
     for (const e of m.events) {
       if (e.type === 'goal_us' && e.playerId) { getp(pName(m, e.playerId)).goals++; if (e.assistId) getp(pName(m, e.assistId)).assists++; }
       if (e.type === 'penalty_us' && e.scored && e.playerId) getp(pName(m, e.playerId)).goals++;  // strafschopdoelpunt telt mee
@@ -854,6 +901,9 @@ async function loadStats() {
   const fairplay = players.filter(p => p.mp > 0).sort((a, b) => (a.ms / a.mp) - (b.ms / b.mp)).slice(0, 12);
   const keepers = players.filter(p => p.cs > 0).sort((a, b) => b.cs - a.cs);
   const carded = players.filter(p => p.yc || p.rc).sort((a, b) => (b.yc + b.rc * 2) - (a.yc + a.rc * 2));
+  const posList = players.filter(p => p.mp > 0 && Object.keys(p.lines).length).sort((a, b) => b.mp - a.mp);
+  const anyAbsent = players.some(p => p.absent);
+  const attend = players.filter(p => (p.squad + p.absent) > 0).sort((a, b) => (b.squad / (b.squad + b.absent)) - (a.squad / (a.squad + a.absent)) || b.squad - a.squad);
   el.innerHTML = filterBar + `
     <div class="card">
       <div class="stat-big" style="margin-bottom:10px">
@@ -873,7 +923,9 @@ async function loadStats() {
     <div class="sec">⏱ Meeste speelminuten</div><div class="card">${minutes.length ? minutes.map((p,i)=>`<div class="stat-row"><span class="stat-rank">${i+1}</span><span style="flex:1">${esc(p.name)}<small style="color:var(--txt2);display:block">${p.mp} ${p.mp===1?'wedstrijd':'wedstrijden'} · gem. ${Math.round(p.ms/p.mp/60000)}'/match</small></span><span style="font-weight:800">${Math.floor(p.ms/60000)}'</span></div>`).join('') : '<p style="color:var(--txt2);font-size:14px">—</p>'}</div>
     <div class="sec">⚖️ Fair-play · minste speeltijd</div><div class="card"><p style="font-size:12px;color:var(--txt2);margin-bottom:8px">Gesorteerd op laagste gemiddelde speeltijd per wedstrijd — zo zie je snel wie meer speelkansen verdient.</p>${fairplay.length ? fairplay.map(p=>`<div class="stat-row"><span style="flex:1">${esc(p.name)}</span><span style="color:var(--txt2);font-size:13px">${p.mp} wd</span><span style="font-weight:800;min-width:64px;text-align:right">${Math.round(p.ms/p.mp/60000)}'/match</span></div>`).join('') : '<p style="color:var(--txt2);font-size:14px">—</p>'}</div>
     <div class="sec">🧤 Clean sheets</div><div class="card"><div class="stat-row"><span style="flex:1">Ploeg (geen tegendoel)</span><span style="font-weight:800">${cleanSheets}/${list.length}</span></div>${keepers.map(p=>`<div class="stat-row"><span style="flex:1">${esc(p.name)}</span><span style="font-weight:800">${p.cs}</span></div>`).join('')}</div>
-    ${carded.length ? `<div class="sec">🟨 Kaarten</div><div class="card">${carded.map(p=>`<div class="stat-row"><span style="flex:1">${esc(p.name)}</span><span>${p.yc?'🟨'.repeat(p.yc):''}${p.rc?'🟥'.repeat(p.rc):''}</span></div>`).join('')}</div>` : ''}`;
+    ${carded.length ? `<div class="sec">🟨 Kaarten</div><div class="card">${carded.map(p=>`<div class="stat-row"><span style="flex:1">${esc(p.name)}</span><span>${p.yc?'🟨'.repeat(p.yc):''}${p.rc?'🟥'.repeat(p.rc):''}</span></div>`).join('')}</div>` : ''}
+    ${posList.length ? `<div class="sec">🧭 Posities <span style="font-weight:400;text-transform:none;color:var(--txt2)">(hoe vaak per linie)</span></div><div class="card">${posList.map(p=>{const parts=Object.entries(p.lines).sort((a,b)=>b[1]-a[1]).map(([l,c])=>`${LINE_SHORT[l]||l}×${c}`).join(' · ');return `<div class="stat-row"><span style="flex:1">${esc(p.name)}</span><span style="color:var(--txt2);font-size:13px">${parts}</span></div>`;}).join('')}</div>` : ''}
+    ${anyAbsent ? `<div class="sec">📋 Aanwezigheid <span style="font-weight:400;text-transform:none;color:var(--txt2)">(in selectie / totaal)</span></div><div class="card">${attend.map(p=>{const tot=p.squad+p.absent;const pct=tot?Math.round(p.squad/tot*100):0;return `<div class="stat-row"><span style="flex:1">${esc(p.name)}</span><span style="color:var(--txt2);font-size:13px">${p.squad}/${tot}</span><span style="font-weight:800;min-width:46px;text-align:right${pct<60?';color:var(--org)':''}">${pct}%</span></div>`;}).join('')}</div>` : ''}`;
 }
 
 // ===================== SETUP / SETTINGS (club-branding) =====================
@@ -1442,6 +1494,7 @@ async function finishWizard(startNow) {
     matchType: wiz.matchType, fieldSize: MATCH_TYPES[wiz.matchType].field,
     periodKey: wiz.periodKey, numQuarters: PERIOD_TYPES[wiz.periodKey].count, quarterDuration: wiz.quarterDuration,
     players: starters.concat(bench),
+    absentPlayers: wiz.pool.filter(p => p.sel === 'absent').map(p => p.name),
   };
   let m;
   if (wiz.editId) {
@@ -1491,6 +1544,7 @@ function renderPrep() {
       <button class="btn btn-pale" onclick="editMatchWizard(match)">✏️ Bewerken</button>
       <button class="btn btn-orgpale" onclick="modalEditPlayers()">👤 Spelers</button>
     </div>
+    <button class="btn btn-gray" style="margin-top:8px" onclick="modalQuickResult()">⚡ Snel resultaat invoeren</button>
     <div class="sec">Info</div>
     <div class="card">${info.length ? info.map(([k, v]) => `<div class="stat-row"><span style="color:var(--txt2);min-width:120px">${k}</span><span style="font-weight:600">${esc(v)}</span></div>`).join('') : '<p style="color:var(--txt2);font-size:14px">Geen extra info.</p>'}</div>
     <div class="sec">Opstelling (${starters.length})</div>
@@ -1501,6 +1555,36 @@ function renderPrep() {
   </div>`;
 }
 async function startPlanned() { match.status = 'live'; await dbSave(match); await go('live', match.id); }
+// ----- Snel resultaat invoeren (wedstrijd die al gespeeld is, zonder live opvolging) -----
+let qrScorers = {};
+function modalQuickResult() {
+  const m = match; qrScorers = {};
+  openModal(`<h3>⚡ Snel resultaat</h3>
+    <p style="text-align:center;color:var(--txt2);font-size:13px;margin-bottom:14px">Voor een wedstrijd die al gespeeld is. Vul de eindstand in; speeltijd wordt niet bijgehouden.</p>
+    <div style="display:grid;grid-template-columns:1fr auto 1fr;gap:8px;align-items:end;margin-bottom:14px">
+      <div class="fg" style="margin:0"><label>${esc(tName(m))}</label><input id="qr-us" type="number" inputmode="numeric" value="0" style="text-align:center;font-size:22px;font-weight:800"></div>
+      <div style="font-size:22px;font-weight:800;padding-bottom:12px">–</div>
+      <div class="fg" style="margin:0"><label>${esc(m.opponent)}</label><input id="qr-them" type="number" inputmode="numeric" value="0" style="text-align:center;font-size:22px;font-weight:800"></div>
+    </div>
+    <div class="sec" style="margin-top:0">Doelpuntenmakers (optioneel)</div>
+    <div>${m.players.map(p => `<div class="selrow"><div class="nm">${esc(p.name)}</div><div class="seg"><button type="button" onclick="qrAdj('${p.id}',-1)">−</button><span id="qr-c-${p.id}" style="min-width:34px;text-align:center;font-weight:800;padding:0 6px;align-self:center">0</span><button type="button" onclick="qrAdj('${p.id}',1)">+</button></div></div>`).join('')}</div>
+    <button class="btn btn-green" style="margin-top:12px" onclick="saveQuickResult()">✓ Opslaan als gespeeld</button>
+    <button class="btn btn-gray" style="margin-top:8px" onclick="closeModal()">Annuleren</button>`);
+}
+function qrAdj(id, d) { qrScorers[id] = Math.max(0, (qrScorers[id] || 0) + d); const el = document.getElementById('qr-c-' + id); if (el) el.textContent = qrScorers[id]; }
+async function saveQuickResult() {
+  const us = Math.max(0, parseInt(document.getElementById('qr-us').value) || 0);
+  const them = Math.max(0, parseInt(document.getElementById('qr-them').value) || 0);
+  match.events = (match.events || []).filter(e => !e.quick); // eerdere snelinvoer wissen
+  const sum = Object.values(qrScorers).reduce((a, b) => a + b, 0);
+  const usFinal = Math.max(us, sum);
+  Object.entries(qrScorers).forEach(([pid, c]) => { for (let i = 0; i < c; i++) match.events.push({ id: uid(), realTime: Date.now(), gameTimeMs: 0, quarterNum: null, type: 'goal_us', playerId: pid, assistId: null, quick: true }); });
+  for (let i = 0; i < usFinal - sum; i++) match.events.push({ id: uid(), realTime: Date.now(), gameTimeMs: 0, quarterNum: null, type: 'goal_us', playerId: null, assistId: null, quick: true });
+  for (let i = 0; i < them; i++) match.events.push({ id: uid(), realTime: Date.now(), gameTimeMs: 0, quarterNum: null, type: 'goal_them', quick: true });
+  recomputeScore(match);
+  match.status = 'done'; match.quarterStatus = 'done';
+  await dbSave(match); closeModal(); go('detail', match.id);
+}
 
 // ===================== EDIT PLAYERS =====================
 function modalEditPlayers() {
@@ -1563,6 +1647,15 @@ function renderLive() {
     const cls = i < completed ? 'done' : (i === qNum-1 && !isBetween && !isDone && qNum > 0 ? 'active' : '');
     return `<div class="qdot ${cls}"></div>`;
   }).join('');
+  // Speeltijd-nudge: bankspelers die nog 0 minuten hebben zodra de match bezig is.
+  const mNudge = (() => {
+    if (isDone || qNum === 0) return '';
+    const mins = calcMinutes(match);
+    const zero = playersOnBench(match).filter(p => (mins[p.id] ? mins[p.id].ms : 0) === 0);
+    return zero.length ? `<div class="nudge">⏱ Nog niet gespeeld: <b>${zero.map(p => esc(p.name)).join(', ')}</b></div>` : '';
+  })();
+  const curKeeper = (match.keeperByQ && match.keeperByQ[qNum]) ? pName(match, match.keeperByQ[qNum]) : null;
+  const keeperChip = canEvent ? `<div style="text-align:center;margin-bottom:12px"><span class="keeper-chip" onclick="modalKeeper()">🧤 Keeper: ${curKeeper ? esc(curKeeper) : 'kies'} ✏️</span></div>` : '';
 
   let tabContent = '';
   if (tab === 'wedstrijd') {
@@ -1578,6 +1671,8 @@ function renderLive() {
         <div class="qdots">${dots}</div>
         <div style="margin-top:10px"><span class="start-chip ${countdownOn()?'on':''}" onclick="toggleCountdown()" style="font-size:12px;padding:5px 12px">⏱ ${countdownOn()?'Aftellen':'Optellen'}</span></div>
       </div>
+      ${keeperChip}
+      ${mNudge}
       ${!isDone ? `<div class="qctrl">
         ${canStartFirst ? `<button class="qbtn qbtn-start" onclick="startQuarter()" style="grid-column:1/-1">▶ Start wedstrijd</button>` : ''}
         ${canStartNext ? `<button class="qbtn qbtn-start" onclick="startQuarter()" style="grid-column:1/-1">▶ Start ${pSingLow(match)} ${qNum+1}</button>` : ''}
@@ -1596,10 +1691,9 @@ function renderLive() {
         <div class="evtbtn eg ${dis}" onclick="modalGoal()"><span class="ei">⚽</span><span class="el">Goal</span></div>
         <div class="evtbtn ec ${dis}" onclick="modalCorner()"><span class="ei">🚩</span><span class="el">Hoekschop</span></div>
         <div class="evtbtn es ${dis}" onclick="modalSub()"><span class="ei">🔄</span><span class="el">Wissel</span></div>
-        <div class="evtbtn eyel ${dis}" onclick="modalCard('yellow')"><span class="ei">🟨</span><span class="el">Gele kaart</span></div>
-        <div class="evtbtn ered ${dis}" onclick="modalCard('red')"><span class="ei">🟥</span><span class="el">Rode kaart</span></div>
+        ${(match.matchType==='3v3'||match.matchType==='5v5') ? '' : `<div class="evtbtn eyel ${dis}" onclick="modalCard('yellow')"><span class="ei">🟨</span><span class="el">Gele kaart</span></div>
+        <div class="evtbtn ered ${dis}" onclick="modalCard('red')"><span class="ei">🟥</span><span class="el">Rode kaart</span></div>`}
         <div class="evtbtn epen ${dis}" onclick="modalPenalty()"><span class="ei">🎯</span><span class="el">Penalty</span></div>
-        <div class="evtbtn efk ${dis}" onclick="modalFreekick()"><span class="ei">⚡</span><span class="el">Vrije trap</span></div>
         <div class="evtbtn einj ${dis}" onclick="modalInjury()"><span class="ei">🤕</span><span class="el">Blessure</span></div>
         <div class="evtbtn ${dis}" onclick="modalExtra()"><span class="ei">📊</span><span class="el">Meer</span></div>
       </div>
@@ -1674,8 +1768,33 @@ async function startQuarter() {
     pIn.onField = true; pIn.x = pOut.x; pIn.y = pOut.y; pIn.line = pOut.line;
   }
   match.pendingSubs = [];
+  // Keeper voor dit deel: standaard de speler op de doellijn, instelbaar via de keeper-chip.
+  match.keeperByQ = match.keeperByQ || {};
+  if (!match.keeperByQ[match.currentQuarter]) {
+    const gk = match.players.find(p => p.onField && p.line === 'Doel');
+    if (gk) match.keeperByQ[match.currentQuarter] = gk.id;
+  }
   requestWake();
   await dbSave(match); startTimer(); render();
+}
+function modalKeeper() {
+  const on = playersOnField(match);
+  const cur = match.keeperByQ && match.keeperByQ[match.currentQuarter];
+  openModal(`<h3>🧤 Keeper · ${pSing(match)} ${match.currentQuarter}</h3>
+    ${on.map(p => `<div class="mopt ${cur===p.id?'sel':''}" onclick="setKeeper('${p.id}')"><div class="mopt-num">${p.number||'?'}</div>${esc(p.name)} <span style="color:var(--txt2);font-size:13px">${p.line}</span></div>`).join('')}
+    <button class="btn btn-gray" style="margin-top:12px" onclick="closeModal()">Sluiten</button>`);
+}
+async function setKeeper(id) { match.keeperByQ = match.keeperByQ || {}; match.keeperByQ[match.currentQuarter] = id; await dbSave(match); closeModal(); render(); }
+// Minuten in doel per keeper (op basis van keeperByQ × duur per deel).
+function keeperMinutes(m) {
+  const out = {};
+  if (!m.keeperByQ) return out;
+  for (const q of m.quarters) {
+    const kid = m.keeperByQ[q.num]; if (!kid) continue;
+    const dur = q.endTime ? q.endTime - q.startTime - (q.totalPaused || 0) : 0;
+    out[kid] = (out[kid] || 0) + Math.max(0, dur);
+  }
+  return out;
 }
 async function pauseQuarter() {
   const q = match.quarters[match.quarters.length - 1];
@@ -1955,53 +2074,15 @@ async function confirmGoal() {
 }
 
 // ===================== MODAL: CORNER =====================
-let cornerTeam = 'us', cornerPlayerId = null, cornerType = 'lang';
+// Hoekschop: één tik per ploeg (geen nemer/type meer — overbodig voor jeugd).
 function modalCorner() {
-  cornerTeam = 'us'; cornerPlayerId = null; cornerType = 'lang';
-  const on = playersOnField(match);
   openModal(`<h3>🚩 Hoekschop</h3>
-    <div class="sec" style="margin-top:0">Voor wie?</div>
-    <div class="tgl" id="corner-team">
-      <button class="act" onclick="tglCornerTeam('us',this)">${esc(tName(match))}</button>
-      <button onclick="tglCornerTeam('them',this)">Tegenstander</button>
-    </div>
-    <div id="corner-player-section">
-      <div class="sec">Wie neemt de hoekschop?</div>
-      <div id="corner-players">
-        ${on.map(p=>`<div class="mopt" onclick="selectCornerPlayer('${p.id}',this)"><div class="mopt-num">${p.number||'?'}</div>${esc(p.name)}</div>`).join('')}
-        <div class="mopt mopt-skip" onclick="selectCornerPlayer(null,this)">Niet ingeven</div>
-      </div>
-    </div>
-    <div class="sec">Type</div>
-    <div class="tgl" id="corner-type">
-      <button class="act" onclick="tglCornerType('lang',this)">Lang</button>
-      <button onclick="tglCornerType('kort',this)">Kort</button>
-    </div>
-    <button class="btn btn-green" style="margin-top:12px" onclick="confirmCorner()">✓ Bevestigen</button>
-    <button class="btn btn-gray" style="margin-top:8px" onclick="closeModal()">Annuleren</button>`);
+    <p style="text-align:center;color:var(--txt2);font-size:13px;margin-bottom:14px">Voor wie was de hoekschop?</p>
+    <div class="mopt" onclick="logCorner('us')"><div class="mopt-num">🚩</div>${esc(tName(match))}</div>
+    <div class="mopt" onclick="logCorner('them')"><div class="mopt-num mopt-num-off">🚩</div>Tegenstander</div>
+    <button class="btn btn-gray" style="margin-top:12px" onclick="closeModal()">Annuleren</button>`);
 }
-function tglCornerTeam(team, btn) {
-  cornerTeam = team;
-  document.querySelectorAll('#corner-team button').forEach(b => b.classList.remove('act'));
-  btn.classList.add('act');
-  document.getElementById('corner-player-section').style.display = team === 'us' ? '' : 'none';
-}
-function selectCornerPlayer(id, el) {
-  cornerPlayerId = id;
-  document.querySelectorAll('#corner-players .mopt').forEach(o => o.classList.remove('sel'));
-  el.classList.add('sel');
-}
-function tglCornerType(type, btn) {
-  cornerType = type;
-  document.querySelectorAll('#corner-type button').forEach(b => b.classList.remove('act'));
-  btn.classList.add('act');
-}
-async function confirmCorner() {
-  const evtType = cornerTeam === 'us' ? 'corner_us' : 'corner_them';
-  const extra = cornerTeam === 'us' ? { playerId: cornerPlayerId || null, cornerType } : { cornerType };
-  addEvent(evtType, extra);
-  await dbSave(match); closeModal(); render();
-}
+async function logCorner(team) { addEvent(team === 'us' ? 'corner_us' : 'corner_them', {}); await dbSave(match); closeModal(); render(); }
 
 // ===================== MODAL: SUB =====================
 let subOut = null, subIn = null;
@@ -2212,6 +2293,12 @@ function renderDetail() {
     <div class="sec">Opstelling</div>
     <div class="card">${renderPitch(match, match.players.filter(p=>p.starting))}</div>
     ${match.quarters.length ? `<div class="sec">Per ${pSingLow(match)}</div><div class="card">${qSummary}</div>` : ''}
+    ${(match.keeperByQ && Object.keys(match.keeperByQ).length) ? (() => {
+      const km = keeperMinutes(match);
+      const perQ = match.quarters.map(q => { const kid = match.keeperByQ[q.num]; return `<div class="stat-row"><span style="min-width:40px;font-weight:800">${pAbbr(match)}${q.num}</span><span style="flex:1">${kid?esc(pName(match,kid)):'—'}</span></div>`; }).join('');
+      const totals = Object.entries(km).map(([id,ms]) => `<div class="stat-row"><span style="flex:1">${esc(pName(match,id))}</span><span style="font-weight:800">${Math.round(ms/60000)}' in doel</span></div>`).join('');
+      return `<div class="sec">🧤 Keeper per ${pSingLow(match)}</div><div class="card">${perQ}${totals?`<hr>${totals}`:''}</div>`;
+    })() : ''}
     <div class="sec">Speelminuten <span style="font-weight:400;text-transform:none;color:var(--txt2)">(balk = % van de speeltijd · rood < 50%)</span></div>
     <div class="card">${match.players.map(p => playerRowHtml(p, mins[p.id], !p.onField, getGameTimeMs(match))).join('')}</div>
     <div class="sec">Events (${match.events.length})</div>
