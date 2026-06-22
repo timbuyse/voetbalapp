@@ -653,6 +653,33 @@ function renderPitch(m, players) {
   </div>
   <div class="field-legend">🟠 = doelman · cijfer in bol = rugnummer · onder = naam</div>`;
 }
+// Zelfstandige SVG-veldweergave voor de PDF (los venster, zonder de app-CSS).
+function pitchSVG(m, players) {
+  const W = 320, H = 480, R = 15;
+  const pts = [];
+  players.filter(p => typeof p.x === 'number' && typeof p.y === 'number').forEach(p => pts.push({ p, x: p.x, y: p.y }));
+  const byLine = {};
+  players.filter(p => !(typeof p.x === 'number' && typeof p.y === 'number')).forEach(p => { (byLine[p.line] = byLine[p.line] || []).push(p); });
+  Object.entries(byLine).forEach(([line, ps]) => {
+    const y = LINE_Y[line] != null ? LINE_Y[line] : 50, n = ps.length;
+    ps.forEach((p, i) => pts.push({ p, x: n === 1 ? 50 : 18 + i * (64 / (n - 1)), y }));
+  });
+  const dots = pts.map(({ p, x, y }) => {
+    const cx = (x / 100 * W).toFixed(1), cy = (y / 100 * H).toFixed(1);
+    const gk = p.line === 'Doel', cap = (m.captainId === p.id) ? '© ' : '';
+    return `<g><circle cx="${cx}" cy="${cy}" r="${R}" fill="${gk ? '#f5821f' : '#101010'}" stroke="#fff" stroke-width="2"/>` +
+      `<text x="${cx}" y="${(+cy + 4).toFixed(1)}" text-anchor="middle" font-size="13" font-weight="bold" fill="#fff">${esc(p.number || '?')}</text>` +
+      `<text x="${cx}" y="${(+cy + R + 12).toFixed(1)}" text-anchor="middle" font-size="10" font-weight="bold" fill="#fff">${esc(cap + (p.name || ''))}</text></g>`;
+  }).join('');
+  return `<svg viewBox="-3 -3 ${W + 6} ${H + 6}" width="280" style="max-width:100%">
+    <rect x="0" y="0" width="${W}" height="${H}" rx="10" fill="#1c8a46" stroke="#fff" stroke-width="3"/>
+    <line x1="0" y1="${H / 2}" x2="${W}" y2="${H / 2}" stroke="rgba(255,255,255,.5)" stroke-width="2"/>
+    <circle cx="${W / 2}" cy="${H / 2}" r="36" fill="none" stroke="rgba(255,255,255,.5)" stroke-width="2"/>
+    <rect x="${W * 0.27}" y="0" width="${W * 0.46}" height="${H * 0.13}" fill="none" stroke="rgba(255,255,255,.5)" stroke-width="2"/>
+    <rect x="${W * 0.27}" y="${H * 0.87}" width="${W * 0.46}" height="${H * 0.13}" fill="none" stroke="rgba(255,255,255,.5)" stroke-width="2"/>
+    ${dots}
+  </svg>`;
+}
 
 // ===================== HOME =====================
 const views = {
@@ -2017,6 +2044,9 @@ function exportPDF() {
     </div>
     <div class="score"><span class="us">${m.scoreUs}</span> – ${m.scoreThem}</div>
     ${m.motmId?`<p style="text-align:center;font-weight:700;margin:-8px 0 10px">⭐ Man van de match: ${esc(pName(m,m.motmId))}</p>`:''}
+    ${m.players.some(p=>p.starting)?`<h2>Basisopstelling${m.formation?` · ${esc(m.formation)}`:''}</h2>
+    <div style="text-align:center;margin:10px 0">${pitchSVG(m, m.players.filter(p=>p.starting))}</div>
+    <p style="text-align:center;color:#9ca3af;font-size:11px;margin-top:-4px">🟠 doelman · cijfer = rugnummer · © kapitein</p>`:''}
     ${m.quarters.length?`<h2>Tussenstand per ${pSingLow(m)}</h2>
     <table><thead><tr><th>${pSing(m)}</th><th>Tussenstand</th><th>Duur</th><th>Doelpunten</th></tr></thead>
     <tbody>${perQuarterRows}</tbody></table>`:''}
