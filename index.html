@@ -215,6 +215,8 @@
     body.dark .fg input,body.dark .fg select,body.dark .fg textarea,body.dark .pirow input,body.dark .pirow select,body.dark .pirow2 input,body.dark .pirow2 select,body.dark .pn-inp,body.dark .filterbar select,body.dark .start-chip,body.dark .team-chip,body.dark .place-chip{background:#0f1828;color:var(--txt)}
     body.dark .evtbtn{background:#0f1828}
     body.dark .mopt{background:#0f1828}
+    body.dark .credit b{color:var(--txt)}
+    body.dark .mi-score{color:var(--txt)}
     /* Back-up-herinnering */
     .backup-banner{background:var(--orgp);color:var(--org2);border:1px solid var(--orgb);border-radius:12px;padding:12px 14px;margin-bottom:12px;display:flex;align-items:center;gap:10px;font-size:13px;font-weight:600}
     .backup-banner button{margin-left:auto;flex-shrink:0}
@@ -361,7 +363,7 @@ function applyTheme(t) {
 }
 function applyStoredTheme() { let t = null; try { t = JSON.parse(localStorage.getItem('voetbal_theme') || 'null'); } catch (e) {} applyTheme(t || GENERIC_THEME); }
 // Donkere modus (per toestel)
-function darkOn() { return localStorage.getItem('voetbal_dark') === '1'; }
+function darkOn() { return localStorage.getItem('voetbal_dark') !== '0'; } // standaard AAN (enkel '0' = uit)
 function applyDark() { document.body.classList.toggle('dark', darkOn()); }
 function toggleDark() { localStorage.setItem('voetbal_dark', darkOn() ? '0' : '1'); applyDark(); render(); }
 // Dominante kleuren uit een canvas halen -> {primary, accent, dark}
@@ -729,14 +731,12 @@ const views = {
     loadHome();
     return `<div class="hdr hdr-home"><img src="${getClubLogo()}" class="hdr-crest" alt="logo"><span class="hdr-clubname">${esc(getClubName())}</span><button class="hdr-gear" onclick="go('settings')" title="Instellingen">⚙</button></div>
       <div class="content" id="home-content"><div class="empty"><div class="ei">⏳</div><p>Laden...</p></div></div>
-      <div class="credit">App created by <b>Tim Buyse</b></div>
-      <button class="fab" onclick="newMatch()">+</button>`;
+      <div class="credit">App created by <b>Tim Buyse</b></div>`;
   },
   matches: () => {
     loadMatches();
     return `<div class="hdr"><button class="back" onclick="go('home')">‹</button><h1>⚽ Wedstrijden</h1></div>
-      <div class="content" id="matches-content"><div class="empty"><div class="ei">⏳</div><p>Laden...</p></div></div>
-      <button class="fab" onclick="newMatch()">+</button>`;
+      <div class="content" id="matches-content"><div class="empty"><div class="ei">⏳</div><p>Laden...</p></div></div>`;
   },
   setup: () => { pendingLogo = mapStoredLogo() || 'DEFAULT'; pendingTheme = null; return renderSettings(true); },
   settings: () => { pendingLogo = mapStoredLogo() || 'DEFAULT'; pendingTheme = null; return renderSettings(false); },
@@ -787,19 +787,20 @@ async function loadHome() {
   let upcoming = all.filter(m => m.status === 'live' || m.status === 'planned');
   if (homeFilter !== 'all') upcoming = upcoming.filter(m => m.teamName === homeFilter);
   upcoming.sort((a, b) => { const r = (a.status === 'live' ? 0 : 1) - (b.status === 'live' ? 0 : 1); if (r) return r; return (a.date || '').localeCompare(b.date || ''); });
-  upcoming = upcoming.slice(0, 5);
+  upcoming = upcoming.slice(0, 1); // enkel de eerstvolgende
   const upcomingHtml = upcoming.length
     ? upcoming.map(matchItemHtml).join('')
-    : `<div class="empty" style="padding:24px 16px"><div class="ei">📅</div><p>Geen geplande wedstrijd${homeFilter!=='all'?' voor deze ploeg':''}.<br>Tik <b>+</b> om er een te plannen.</p></div>`;
-  // Recent gespeeld (zelfde filter).
+    : `<div class="empty" style="padding:24px 16px"><div class="ei">📅</div><p>Geen geplande wedstrijd${homeFilter!=='all'?' voor deze ploeg':''}.</p></div>`;
+  // Laatst gespeelde wedstrijd (zelfde filter).
   let recent = all.filter(m => m.status === 'done');
   if (homeFilter !== 'all') recent = recent.filter(m => m.teamName === homeFilter);
-  recent = recent.slice(0, 2);
-  const recentHtml = recent.length ? `<div class="sec">🕑 Recent gespeeld</div>${recent.map(matchItemHtml).join('')}` : '';
+  recent = recent.slice(0, 1);
+  const recentHtml = recent.length ? `<div class="sec">🕑 Laatst gespeeld</div>${recent.map(matchItemHtml).join('')}` : '';
+  const newBtn = `<button class="btn btn-green" onclick="newMatch()" style="margin-bottom:14px">⚽ + Nieuwe wedstrijd</button>`;
   const lastB = localStorage.getItem('voetbal_last_backup');
   const ageDays = lastB ? (Date.now() - +lastB) / 864e5 : Infinity;
   const backupBanner = all.length && ageDays > 14 ? `<div class="backup-banner"><span>💾 ${lastB ? 'Je laatste back-up is meer dan 2 weken oud.' : 'Maak een back-up zodat je niets verliest.'}</span><button class="btn btn-org btn-sm" onclick="go('settings')">Back-up</button></div>` : '';
-  el.innerHTML = tiles + backupBanner + `<div class="sec">📅 Komende wedstrijd</div>` + filterBar + upcomingHtml + recentHtml;
+  el.innerHTML = tiles + newBtn + backupBanner + `<div class="sec">📅 Eerstvolgende wedstrijd</div>` + filterBar + upcomingHtml + recentHtml;
 }
 // WEDSTRIJDEN = volledige lijst met filter + zoeken.
 async function loadMatches() {
@@ -813,16 +814,22 @@ async function loadMatches() {
   const teams = [...new Set(all.map(m => m.teamName).filter(Boolean))].sort();
   if (homeFilter !== 'all' && !teams.includes(homeFilter)) homeFilter = 'all';
   const list = (homeFilter === 'all' ? all : all.filter(m => m.teamName === homeFilter)).slice();
-  const rank = m => m.status === 'live' ? 0 : m.status === 'planned' ? 1 : 2;
-  list.sort((a, b) => { const r = rank(a) - rank(b); if (r) return r; return rank(a) === 1 ? (new Date(a.date || 0) - new Date(b.date || 0)) : (b.createdAt - a.createdAt); });
   const filterBar = teams.length ? `<div class="filterbar">
     <select onchange="setHomeFilter(this.value)">
       <option value="all" ${homeFilter==='all'?'selected':''}>Alle ploegen (${all.length})</option>
       ${teams.map(t => `<option value="${esc(t)}" ${homeFilter===t?'selected':''}>${esc(t)} (${all.filter(m=>m.teamName===t).length})</option>`).join('')}
     </select></div>` : '';
-  const items = list.length ? list.map(matchItemHtml).join('') : `<div class="empty"><div class="ei">🔍</div><p>Geen wedstrijden voor deze ploeg.</p></div>`;
+  // Gescheiden in duidelijke groepen: live · gepland (vroegste eerst) · gespeeld (recentste eerst).
+  const live = list.filter(m => m.status === 'live');
+  const planned = list.filter(m => m.status === 'planned').sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+  const done = list.filter(m => m.status === 'done').sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.createdAt - a.createdAt));
+  const sec = (title, arr) => arr.length ? `<div class="sec">${title}</div>${arr.map(matchItemHtml).join('')}` : '';
+  const items = list.length
+    ? sec('🔴 Live', live) + sec('🗓 Geplande wedstrijden', planned) + sec('✅ Gespeelde wedstrijden', done)
+    : `<div class="empty"><div class="ei">🔍</div><p>Geen wedstrijden voor deze ploeg.</p></div>`;
   const searchBar = all.length > 6 ? `<div class="searchbar"><input id="home-search" type="search" placeholder="🔍 Zoek op tegenstander, ploeg, plaats…" oninput="filterHomeItems(this.value)" value="${esc(homeSearch)}"></div>` : '';
-  el.innerHTML = filterBar + searchBar + `<div id="match-list">${items}</div>`;
+  const newBtn = `<button class="btn btn-green" onclick="newMatch()" style="margin-bottom:12px">⚽ + Nieuwe wedstrijd</button>`;
+  el.innerHTML = newBtn + filterBar + searchBar + `<div id="match-list">${items}</div>`;
   if (homeSearch) filterHomeItems(homeSearch);
 }
 let homeSearch = '';
@@ -2272,7 +2279,7 @@ function renderDetail() {
   <div class="content">
     <div class="card" style="text-align:center">
       <div style="font-size:13px;color:var(--txt2);margin-bottom:4px">Eindscore</div>
-      <div style="font-size:50px;font-weight:900;color:var(--blk)"><span style="color:var(--grn)">${match.scoreUs}</span> – ${match.scoreThem}</div>
+      <div style="font-size:50px;font-weight:900;color:var(--txt)"><span style="color:var(--grn)">${match.scoreUs}</span> – ${match.scoreThem}</div>
       <div style="font-size:14px;color:var(--txt2)">${esc(tName(match))} – ${esc(match.opponent)}</div>
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px" class="no-print">
