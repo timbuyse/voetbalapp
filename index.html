@@ -2170,7 +2170,7 @@ function renderPrep() {
   const ro = !!(m.fromCloud && !isAdmin); // kijker: alleen-lezen
   const starters = m.players.filter(p => p.starting), bench = m.players.filter(p => !p.starting);
   const info = [['Formatie', m.formation], ['Trainer', m.trainer], ['Ploegverantwoordelijke', m.responsible], ['Soort', m.competition], ['Speeldag', m.matchday], ['Scheidsrechter', m.referee], ['Truitkleur', m.jersey], ['Weer / veld', m.weather]].filter(([k, v]) => v);
-  const prepBack = m.tournamentId ? `goTournament('${m.tournamentId}')` : `go('home')`;
+  const prepBack = m.tournamentId ? `goTournament('${m.tournamentId}')` : `go('matches')`;
   return `
   <div class="hdr"><button class="back" onclick="${prepBack}">‹</button>
     <div><h1>${esc(tName(m))} vs ${esc(m.opponent)}</h1><div class="hdr-sub">🗓 Gepland · ${m.location} · ${matchWhen(m)} · ${m.matchType}</div></div>
@@ -2429,13 +2429,13 @@ function playerRowHtml(p, minsData, isOff=false, totalMs=0) {
 }
 function setTab(t) { tab = t; render(); if (t==='wedstrijd') startTimer(); else stopTimer(); }
 function confirmLeave() {
-  const backFn = (match && match.tournamentId) ? `goTournament('${match && match.tournamentId}')` : `go('home')`;
+  const backFn = (match && match.tournamentId) ? `goTournament('${match && match.tournamentId}')` : `go('matches')`;
   if (match && match.status === 'live') {
     openModal(`<h3>Wedstrijd verlaten?</h3>
       <p style="text-align:center;color:var(--txt2);margin-bottom:16px">De wedstrijd loopt nog. Je kan later terugkomen.</p>
       <button class="btn btn-pale" onclick="closeModal();${backFn}">✓ Terug naar overzicht</button>
       <button class="btn btn-gray" style="margin-top:8px" onclick="closeModal()">Annuleren</button>`);
-  } else { if (match && match.tournamentId) goTournament(match.tournamentId); else go('home'); }
+  } else { if (match && match.tournamentId) goTournament(match.tournamentId); else go('matches'); }
 }
 
 // ===================== QUARTER CONTROLS =====================
@@ -2951,7 +2951,7 @@ function renderDetail() {
     </div>`;
   }).join('');
 
-  const detailBack = match.tournamentId ? `goTournament('${match.tournamentId}')` : `go('home')`;
+  const detailBack = match.tournamentId ? `goTournament('${match.tournamentId}')` : `go('matches')`;
   return `
   <div class="hdr"><button class="back" onclick="${detailBack}">‹</button>
     <div><h1>${esc(tName(match))} vs ${esc(match.opponent)}</h1><div class="hdr-sub">${match.location} · ${matchWhen(match)} · ${match.matchType}</div></div>
