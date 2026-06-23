@@ -1536,12 +1536,15 @@ async function loadTournamentDetail() {
       <div class="stat-box"><div class="v">${gf}–${ga}</div><div class="l">Doelpunten</div></div>
     </div>
   </div>` : '';
-  const newMatchBtn = canManage() ? `<button class="btn btn-green" style="margin-bottom:12px" onclick="addTournamentMatch('${t.id}')">⚽ + Wedstrijd toevoegen</button>` : '';
+  const noSquad = !((squad.base||[]).length + (squad.bench||[]).length + (squad.absent||[]).length);
+  const squadWarning = (canManage() && noSquad) ? `<div class="viewer-banner" style="background:var(--org-pale,#fff3e0);color:#b45309;border-color:#fbbf24">⚠ Nog geen selectie ingegeven — geef eerst een selectie in voor je wedstrijden toevoegt. <button class="btn btn-org btn-sm" onclick="editTournament('${t.id}')">Selectie ingeven</button></div>` : '';
+  const newMatchBtn = (canManage() && !noSquad) ? `<button class="btn btn-green" style="margin-bottom:12px" onclick="addTournamentMatch('${t.id}')">⚽ + Wedstrijd toevoegen</button>` : '';
   const matchList = matches.length
     ? matches.map(matchItemHtml).join('')
-    : `<div class="empty" style="padding:20px 0"><div class="ei" style="font-size:36px">⚽</div><p>Nog geen wedstrijden.${canManage() ? ' Voeg er een toe!' : ''}</p></div>`;
+    : `<div class="empty" style="padding:20px 0"><div class="ei" style="font-size:36px">⚽</div><p>Nog geen wedstrijden.${canManage() && !noSquad ? ' Voeg er een toe!' : ''}</p></div>`;
   el.innerHTML = `
     <div class="card">${infoRows}${squadRow}</div>
+    ${squadWarning}
     ${statsHtml}
     ${newMatchBtn}
     <div class="sec">Wedstrijden (${matches.length})</div>
@@ -1734,6 +1737,14 @@ function addTournamentMatch(trnId) {
   const t = tournamentById(trnId); if (!t) return;
   const team = teamById(t.teamId);
   const squad = t.squad || { base: [], bench: [], absent: [] };
+  const totalSquad = (squad.base||[]).length + (squad.bench||[]).length + (squad.absent||[]).length;
+  if (!totalSquad) {
+    openModal(`<h3>Selectie ontbreekt</h3>
+      <p style="text-align:center;color:var(--txt2);margin-bottom:16px">Geef eerst een selectie in voor dit tornooi voor je wedstrijden toevoegt.</p>
+      <button class="btn btn-green" onclick="closeModal();editTournament('${trnId}')">✏️ Selectie ingeven</button>
+      <button class="btn btn-gray" style="margin-top:8px" onclick="closeModal()">Annuleren</button>`);
+    return;
+  }
   const pool = [
     ...(squad.base   || []).map(s => ({ pid: uid(), srcId: s.srcId, name: s.name, number: s.number, pos: s.pos, fromName: team ? team.name : '', guest: false, sel: 'basis',  slot: null })),
     ...(squad.bench  || []).map(s => ({ pid: uid(), srcId: s.srcId, name: s.name, number: s.number, pos: s.pos, fromName: team ? team.name : '', guest: false, sel: 'bank',   slot: null })),
@@ -2118,6 +2129,39 @@ function editMatchWizard(m) {
   go('new');
 }
 
+function startSelectieWizard() {
+  const m = match;
+  const team = getTeamsV2().find(t => t.name === m.teamName);
+  const fi = Math.max(0, (FORMATIONS[m.matchType] || []).findIndex(f => f.name === m.formation));
+  wiz = {
+    step: 2, editId: m.id, editStatus: m.status, teamNameFallback: m.teamName,
+    teamId: team ? team.id : '', opponent: m.opponent, date: m.date, time: m.time, location: m.location,
+    matchType: m.matchType, periodKey: m.periodKey, quarterDuration: m.quarterDuration,
+    numQuarters: m.numQuarters,
+    competition: m.competition || 'Competitie', matchday: m.matchday || '', referee: m.referee || '',
+    jersey: m.jersey || '', weather: m.weather || '',
+    trainer: m.trainer || '', responsible: m.responsible || '', trainerIsOther: false,
+    formationIndex: fi, selPlace: null, pool: [],
+  };
+  if (m.tournamentId) {
+    wiz.trnMode = true;
+    wiz.tournamentId = m.tournamentId;
+    const t = tournamentById(m.tournamentId);
+    const tTeam = t ? teamById(t.teamId) : null;
+    const squad = t ? (t.squad || { base: [], bench: [], absent: [] }) : { base: [], bench: [], absent: [] };
+    wiz.pool = [
+      ...(squad.base   || []).map(s => ({ pid: uid(), srcId: s.srcId, name: s.name, number: s.number || '', pos: s.pos || '', fromName: tTeam ? tTeam.name : '', guest: false, sel: 'none', slot: null })),
+      ...(squad.bench  || []).map(s => ({ pid: uid(), srcId: s.srcId, name: s.name, number: s.number || '', pos: s.pos || '', fromName: tTeam ? tTeam.name : '', guest: false, sel: 'none', slot: null })),
+      ...(squad.absent || []).map(s => ({ pid: uid(), srcId: s.srcId, name: s.name, number: s.number || '', pos: s.pos || '', fromName: tTeam ? tTeam.name : '', guest: false, sel: 'absent', slot: null })),
+    ];
+    wiz.poolTeamId = t ? t.teamId : wiz.teamId;
+  } else {
+    wiz.poolTeamId = wiz.teamId;
+    buildPool();
+  }
+  go('new');
+}
+
 // ===================== GEPLANDE WEDSTRIJD (PREP) =====================
 function renderPrep() {
   const m = match;
@@ -2134,7 +2178,7 @@ function renderPrep() {
     ${ro ? '<div class="viewer-banner">👁 Je kijkt mee — deze wedstrijd is gepland</div>' : `${(!m.players || !m.players.length) ? '<div class="viewer-banner" style="background:var(--org-pale,#fff3e0);color:#b45309;border-color:#fbbf24">⚠ Selectie nog niet ingegeven — vul de spelers in voor je de wedstrijd start.</div>' : ''}<button class="btn btn-green" onclick="startPlanned()">▶ Wedstrijd starten</button>
     <div class="wiz-nav" style="margin-top:8px">
       <button class="btn btn-pale" onclick="editMatchWizard(match)">✏️ Bewerken</button>
-      <button class="btn btn-orgpale" onclick="modalEditPlayers()">👤 Selectie &amp; opstelling</button>
+      <button class="btn btn-orgpale" onclick="${(!m.players || !m.players.length) ? 'startSelectieWizard()' : 'modalEditPlayers()'}">👤 Selectie &amp; opstelling</button>
     </div>
     <button class="btn btn-gray" style="margin-top:8px" onclick="modalQuickResult()">⚡ Snel resultaat invoeren</button>`}
     <div class="sec">Info</div>
