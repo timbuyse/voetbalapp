@@ -1539,7 +1539,7 @@ async function loadTournamentDetail() {
   const newMatchBtn = canManage() ? `<button class="btn btn-green" style="margin-bottom:12px" onclick="addTournamentMatch('${t.id}')">⚽ + Wedstrijd toevoegen</button>` : '';
   const matchList = matches.length
     ? matches.map(matchItemHtml).join('')
-    : `<div class="empty" style="padding:20px 0"><div class="ei" style="font-size:36px">⚽</div><p>Nog geen wedstrijden. Voeg er een toe!</p></div>`;
+    : `<div class="empty" style="padding:20px 0"><div class="ei" style="font-size:36px">⚽</div><p>Nog geen wedstrijden.${canManage() ? ' Voeg er een toe!' : ''}</p></div>`;
   el.innerHTML = `
     <div class="card">${infoRows}${squadRow}</div>
     ${statsHtml}
