@@ -1995,7 +1995,7 @@ function wizStep2() {
     <div class="sec">${esc(team ? team.name : 'Ploeg')}</div>
     <div class="card">${own.length ? own.map(selRow).join('') : '<p style="color:var(--txt2);font-size:14px">Deze ploeg heeft nog geen spelers. Voeg ze toe via 👥 Ploegen.</p>'}</div>
     ${guests.length ? `<div class="sec">Gastspelers</div><div class="card">${guests.map(selRow).join('')}</div>` : ''}
-    <button class="btn btn-orgpale" onclick="addGuestsModal()">+ Speler van andere ploeg</button>
+    ${wiz.noGuests ? '' : `<button class="btn btn-orgpale" onclick="addGuestsModal()">+ Speler van andere ploeg</button>`}
     <div class="wiz-nav">
       <button class="btn btn-gray" onclick="wizBack()">← Vorige</button>
       <button class="btn btn-green" onclick="wizNext()">Volgende →</button>
@@ -2123,7 +2123,7 @@ function editMatchWizard(m) {
     pool: m.players.map(p => ({ pid: uid(), srcId: null, name: p.name, number: p.number || '', pos: p.line || '', fromName: m.teamName, guest: false, sel: p.starting ? 'basis' : 'bank', slot: null, _x: p.x, _y: p.y })),
     formationIndex: fi, selPlace: null,
   };
-  wiz.poolTeamId = wiz.teamId; // niet opnieuw opbouwen, behoud de selectie
+  wiz.poolTeamId = m.players.length ? wiz.teamId : null; // lege pool → herbouwen vanuit ploeg
   const form = FORMATIONS[m.matchType][fi];
   wiz.pool.filter(p => p.sel === 'basis').forEach(p => { const idx = form.slots.findIndex(s => s.x === p._x && s.y === p._y); p.slot = idx >= 0 ? idx : null; });
   go('new');
@@ -2131,11 +2131,12 @@ function editMatchWizard(m) {
 
 function startSelectieWizard() {
   const m = match;
-  const team = getTeamsV2().find(t => t.name === m.teamName);
+  const team = m.teamId ? teamById(m.teamId) : getTeamsV2().find(t => t.name === m.teamName);
   const fi = Math.max(0, (FORMATIONS[m.matchType] || []).findIndex(f => f.name === m.formation));
   wiz = {
     step: 2, editId: m.id, editStatus: m.status, teamNameFallback: m.teamName,
-    teamId: team ? team.id : '', opponent: m.opponent, date: m.date, time: m.time, location: m.location,
+    teamId: team ? team.id : '', noGuests: true,
+    opponent: m.opponent, date: m.date, time: m.time, location: m.location,
     matchType: m.matchType, periodKey: m.periodKey, quarterDuration: m.quarterDuration,
     numQuarters: m.numQuarters,
     competition: m.competition || 'Competitie', matchday: m.matchday || '', referee: m.referee || '',
@@ -2215,6 +2216,7 @@ async function finishStep1Only() {
     periodKey: wiz.periodKey,
     numQuarters: wiz.numQuarters !== undefined ? wiz.numQuarters : PERIOD_TYPES[wiz.periodKey].count,
     quarterDuration: wiz.quarterDuration,
+    teamId: wiz.teamId || '',
     players: [], absentPlayers: [], status: 'planned',
   };
   if (wiz.tournamentId) m.tournamentId = wiz.tournamentId;
