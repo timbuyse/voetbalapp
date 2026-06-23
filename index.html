@@ -980,12 +980,13 @@ async function loadHome() {
   const all = await dbAll();
   const el = document.getElementById('home-content');
   if (!el) return;
+  const looseMatches = all.filter(m => !m.tournamentId);
   const teamCount = getTeamsV2().length;
   const trnCount = getTournaments().length;
-  const teams = [...new Set(all.map(m => m.teamName).filter(Boolean))].sort();
+  const teams = [...new Set(looseMatches.map(m => m.teamName).filter(Boolean))].sort();
   if (homeFilter !== 'all' && !teams.includes(homeFilter)) homeFilter = 'all';
   const tiles = `<div class="home-tiles" style="grid-template-columns:1fr 1fr">
-    <button class="tile" onclick="go('matches')"><span class="ti">⚽</span><span class="tl">Wedstrijden</span><span class="tc">${all.length}</span></button>
+    <button class="tile" onclick="go('matches')"><span class="ti">⚽</span><span class="tl">Wedstrijden</span><span class="tc">${looseMatches.length}</span></button>
     <button class="tile tile-org" onclick="go('teams')"><span class="ti">👥</span><span class="tl">Ploegen</span><span class="tc">${teamCount} ${teamCount===1?'ploeg':'ploegen'}</span></button>
     <button class="tile tile-dark" onclick="go('tournaments')"><span class="ti">🏆</span><span class="tl">Tornooien</span><span class="tc">${trnCount} ${trnCount===1?'tornooi':'tornooien'}</span></button>
     <button class="tile" onclick="go('stats')"><span class="ti">📊</span><span class="tl">Statistieken</span><span class="tc">bekijk</span></button>
@@ -1000,13 +1001,13 @@ async function loadHome() {
       ${teams.map(t => `<option value="${esc(t)}" ${homeFilter===t?'selected':''}>${esc(t)}</option>`).join('')}
     </select></div>` : '';
   // Komende wedstrijden (live of gepland), gefilterd per ploeg, vroegste eerst.
-  let upcoming = all.filter(m => m.status === 'live' || m.status === 'planned');
+  let upcoming = all.filter(m => (m.status === 'live' || m.status === 'planned') && !m.tournamentId);
   if (homeFilter !== 'all') upcoming = upcoming.filter(m => m.teamName === homeFilter);
   upcoming.sort((a, b) => { const r = (a.status === 'live' ? 0 : 1) - (b.status === 'live' ? 0 : 1); if (r) return r; return (a.date || '').localeCompare(b.date || ''); });
   upcoming = upcoming.slice(0, 1); // enkel de eerstvolgende
   const upcomingHtml = upcoming.length
     ? upcoming.map(matchItemHtml).join('')
-    : `<div class="empty" style="padding:24px 16px"><div class="ei">📅</div><p>Geen geplande wedstrijden${homeFilter!=='all'?' voor deze ploeg':''}.</p></div>`;
+    : `<div class="empty" style="padding:16px"><p style="margin:0;color:var(--txt2)">Geen geplande wedstrijden${homeFilter!=='all'?' voor deze ploeg':''}.</p></div>`;
   // Eerstvolgende tornooi
   let upcomingTrn = getTournaments().filter(t => (t.date || '') >= new Date().toISOString().split('T')[0]);
   if (homeFilter !== 'all') upcomingTrn = upcomingTrn.filter(t => { const team = teamById(t.teamId); return team && team.name === homeFilter; });
@@ -1023,21 +1024,21 @@ async function loadHome() {
           </div>
         </div>`;
       }).join('')
-    : `<div class="empty" style="padding:24px 16px"><div class="ei">🏆</div><p>Geen geplande tornooien${homeFilter!=='all'?' voor deze ploeg':''}.</p></div>`;
+    : `<div class="empty" style="padding:16px"><p style="margin:0;color:var(--txt2)">Geen geplande tornooien${homeFilter!=='all'?' voor deze ploeg':''}.</p></div>`;
   // Laatst gespeelde wedstrijd (zelfde filter).
-  let recent = all.filter(m => m.status === 'done');
+  let recent = looseMatches.filter(m => m.status === 'done');
   if (homeFilter !== 'all') recent = recent.filter(m => m.teamName === homeFilter);
   recent = recent.slice(0, 1);
   const recentHtml = recent.length ? `<div class="sec">🕑 Laatst gespeeld</div>${recent.map(matchItemHtml).join('')}` : '';
   const newBtn = canManage() ? `<button class="btn btn-green" onclick="newMatch()" style="margin-bottom:14px">⚽ + Nieuwe wedstrijd</button>` : '';
   const lastB = localStorage.getItem('voetbal_last_backup');
   const ageDays = lastB ? (Date.now() - +lastB) / 864e5 : Infinity;
-  const backupBanner = (canManage() && all.length && ageDays > 14) ? `<div class="backup-banner"><span>💾 ${lastB ? 'Je laatste back-up is meer dan 2 weken oud.' : 'Maak een back-up zodat je niets verliest.'}</span><button class="btn btn-org btn-sm" onclick="go('settings')">Back-up</button></div>` : '';
-  el.innerHTML = tiles + newBtn + backupBanner + `<div class="sec">📅 Eerstvolgende wedstrijd</div>` + filterBar + upcomingHtml + `<div class="sec">🏆 Eerstvolgende tornooi</div>` + upcomingTrnHtml + recentHtml;
+  const backupBanner = (canManage() && looseMatches.length && ageDays > 14) ? `<div class="backup-banner"><span>💾 ${lastB ? 'Je laatste back-up is meer dan 2 weken oud.' : 'Maak een back-up zodat je niets verliest.'}</span><button class="btn btn-org btn-sm" onclick="go('settings')">Back-up</button></div>` : '';
+  el.innerHTML = tiles + newBtn + backupBanner + `<div class="sec">📅 Eerstvolgende wedstrijd</div>` + filterBar + upcomingHtml + recentHtml + `<div class="sec">🏆 Eerstvolgende tornooi</div>` + upcomingTrnHtml;
 }
 // WEDSTRIJDEN = volledige lijst met filter + zoeken.
 async function loadMatches() {
-  const all = await dbAll();
+  const all = (await dbAll()).filter(m => !m.tournamentId);
   const el = document.getElementById('matches-content');
   if (!el) return;
   if (!all.length) {
@@ -1884,7 +1885,7 @@ function wizStep1() {
       <details class="more-details">
         <summary>+ Meer details (optioneel)</summary>
         <div class="fg" style="margin-top:12px"><label>Soort</label>
-          <select id="n-comp">${['Competitie','Vriendschappelijk','Beker','Tornooi'].map(c => `<option ${wiz.competition===c?'selected':''}>${c}</option>`).join('')}</select></div>
+          <select id="n-comp">${['Competitie','Vriendschappelijk','Beker'].map(c => `<option ${wiz.competition===c?'selected':''}>${c}</option>`).join('')}</select></div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
           <div class="fg"><label>Speeldag</label><input id="n-md" type="text" value="${esc(wiz.matchday)}" placeholder="bv. 5"></div>
           <div class="fg"><label>Truitkleur</label><input id="n-jersey" type="text" value="${esc(wiz.jersey)}" placeholder="bv. zwart-groen"></div>
@@ -2487,7 +2488,7 @@ function modalEditMatchInfo() {
     <div class="fg"><label>Trainer</label><input id="ei-trainer" type="text" value="${esc(match.trainer||'')}" placeholder="Naam trainer" autocomplete="off"></div>
     <div class="fg"><label>Ploegverantwoordelijke</label><input id="ei-responsible" type="text" value="${esc(match.responsible||'')}" placeholder="Naam" autocomplete="off"></div>
     <div class="fg"><label>Scheidsrechter</label><input id="ei-ref" type="text" value="${esc(match.referee||'')}" placeholder="Naam" autocomplete="off"></div>
-    <div class="fg"><label>Soort</label><select id="ei-comp">${['Competitie','Vriendschappelijk','Beker','Tornooi'].map(c=>`<option ${(match.competition||'')=== c?'selected':''}>${c}</option>`).join('')}</select></div>
+    <div class="fg"><label>Soort</label><select id="ei-comp">${['Competitie','Vriendschappelijk','Beker'].map(c=>`<option ${(match.competition||'')=== c?'selected':''}>${c}</option>`).join('')}</select></div>
     <div class="fg"><label>Speeldag</label><input id="ei-md" type="text" value="${esc(match.matchday||'')}" placeholder="bv. 5" autocomplete="off"></div>
     <div class="fg"><label>Truitkleur</label><input id="ei-jersey" type="text" value="${esc(match.jersey||'')}" placeholder="bv. zwart-groen" autocomplete="off"></div>
     <div class="fg"><label>Weer / veld</label><input id="ei-weather" type="text" value="${esc(match.weather||'')}" placeholder="bv. droog, kunstgras" autocomplete="off"></div>
