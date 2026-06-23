@@ -411,6 +411,11 @@ function saveRoster(t, players) { if (!rosterKey(t)) return; const r = getRoster
 function getTeamsV2() { try { return JSON.parse(localStorage.getItem('voetbal_teams_v2') || '[]'); } catch (e) { return []; } }
 function saveTeamsV2(arr) { localStorage.setItem('voetbal_teams_v2', JSON.stringify(arr)); cloudOnLocalTeamsSave(arr); }
 function teamById(id) { return getTeamsV2().find(t => t.id === id) || null; }
+// Tornooien (localStorage)
+function getTournaments() { try { return JSON.parse(localStorage.getItem('voetbal_tournaments') || '[]'); } catch(e) { return []; } }
+function saveTournaments(arr) { localStorage.setItem('voetbal_tournaments', JSON.stringify(arr)); cloudOnLocalTournamentsSave(arr); }
+function tournamentById(id) { return getTournaments().find(t => t.id === id) || null; }
+function goTournament(id) { currentTournament = tournamentById(id); go('tournament'); }
 function migrateTeams() {
   if (localStorage.getItem('voetbal_teams_v2')) return;
   const out = [];
@@ -564,6 +569,10 @@ function cloudOnLocalTeamsSave(arr) {
   if (!cloudReady || !isAdmin) return;
   try { fbdb.ref('teams').set(jclone(arr || [])); } catch (e) {}
 }
+function cloudOnLocalTournamentsSave(arr) {
+  if (!cloudReady || !isAdmin) return;
+  try { fbdb.ref('tournaments').set(jclone(arr || [])); } catch (e) {}
+}
 
 // ---- lezen (iedereen) ----
 function cloudListen() {
@@ -571,6 +580,7 @@ function cloudListen() {
   fbdb.ref('matches').on('value', s => applyCloudMatches(s.val() || {}));
   fbdb.ref('teams').on('value', s => applyCloudTeams(s.val() || []));
   fbdb.ref('club').on('value', s => applyCloudClub(s.val()));
+  fbdb.ref('tournaments').on('value', s => applyCloudTournaments(s.val() || []));
 }
 // Club-identiteit (naam/logo/thema) delen → kijkers hoeven niets in te stellen.
 function cloudOnLocalClubSave() {
@@ -615,12 +625,22 @@ function applyCloudTeams(val) {
   localStorage.setItem('voetbal_teams_v2', JSON.stringify(merged));
   cloudRefreshUI();
 }
+function applyCloudTournaments(val) {
+  const cloud = Array.isArray(val) ? val : Object.values(val || {});
+  const cloudIds = new Set(cloud.map(t => t && t.id).filter(Boolean));
+  const localOnly = getTournaments().filter(t => !t.fromCloud && !cloudIds.has(t.id));
+  const merged = localOnly.concat(cloud.map(t => Object.assign({}, t, { fromCloud: true })));
+  localStorage.setItem('voetbal_tournaments', JSON.stringify(merged));
+  cloudRefreshUI();
+}
 
 function cloudRefreshUI() {
   if (view === 'home') loadHome();
   else if (view === 'matches') loadMatches();
   else if (view === 'stats' && typeof loadStats === 'function') loadStats();
   else if (view === 'teams') render();
+  else if (view === 'tournaments') render();
+  else if (view === 'tournament') loadTournamentDetail();
   // Live/detail/prep: kijkers (geen beheer) volgen de cloud automatisch; de beheerder
   // die zelf invoert laten we ongemoeid zodat zijn invoer niet onderbroken wordt.
   else if ((view === 'detail' || view === 'live' || view === 'prep') && match && !isAdmin) {
@@ -676,6 +696,7 @@ async function cloudPushAll() {
     const all = await dbAll();
     for (const m of all) { try { await fbdb.ref('matches/' + m.id).set(jclone(m)); } catch (e) {} }
     try { await fbdb.ref('teams').set(jclone(getTeamsV2())); } catch (e) {}
+    try { await fbdb.ref('tournaments').set(jclone(getTournaments())); } catch (e) {}
     cloudOnLocalClubSave();
     if (el) el.textContent = `✓ ${all.length} wedstrijd(en) + ploegen gedeeld.`;
   } catch (e) { if (el) el.textContent = 'Er ging iets mis.'; }
@@ -683,6 +704,7 @@ async function cloudPushAll() {
 
 // ===================== STATE =====================
 let view = 'home', match = null, tab = 'wedstrijd', timerInt = null;
+let currentTournament = null, trnWiz = null;
 
 // ===================== UTILS =====================
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2); }
@@ -959,12 +981,14 @@ async function loadHome() {
   const el = document.getElementById('home-content');
   if (!el) return;
   const teamCount = getTeamsV2().length;
+  const trnCount = getTournaments().length;
   const teams = [...new Set(all.map(m => m.teamName).filter(Boolean))].sort();
   if (homeFilter !== 'all' && !teams.includes(homeFilter)) homeFilter = 'all';
-  const tiles = `<div class="home-tiles">
+  const tiles = `<div class="home-tiles" style="grid-template-columns:1fr 1fr">
     <button class="tile" onclick="go('matches')"><span class="ti">⚽</span><span class="tl">Wedstrijden</span><span class="tc">${all.length}</span></button>
     <button class="tile tile-org" onclick="go('teams')"><span class="ti">👥</span><span class="tl">Ploegen</span><span class="tc">${teamCount} ${teamCount===1?'ploeg':'ploegen'}</span></button>
-    <button class="tile tile-dark" onclick="go('stats')"><span class="ti">📊</span><span class="tl">Statistieken</span><span class="tc">bekijk</span></button>
+    <button class="tile tile-dark" onclick="go('tournaments')"><span class="ti">🏆</span><span class="tl">Tornooien</span><span class="tc">${trnCount} ${trnCount===1?'tornooi':'tornooien'}</span></button>
+    <button class="tile" onclick="go('stats')"><span class="ti">📊</span><span class="tl">Statistieken</span><span class="tc">bekijk</span></button>
   </div>`;
   if (!all.length && !teamCount) {
     el.innerHTML = tiles + `<div class="empty"><div class="ei">⚽</div><p>Welkom! Maak eerst een <b>ploeg</b> aan,<br>tik dan <b>+</b> voor je eerste wedstrijd.</p></div>`;
@@ -1173,7 +1197,8 @@ async function exportBackup() {
     settings: { clubName: localStorage.getItem('voetbal_club_name'), clubLogo: localStorage.getItem('voetbal_club_logo'),
       teams: localStorage.getItem('voetbal_teams'), teamsV2: localStorage.getItem('voetbal_teams_v2'), lastTeam: localStorage.getItem('voetbal_last_team'),
       rosters: localStorage.getItem('voetbal_rosters'), countdown: localStorage.getItem('voetbal_countdown'),
-      theme: localStorage.getItem('voetbal_theme'), dark: localStorage.getItem('voetbal_dark') } };
+      theme: localStorage.getItem('voetbal_theme'), dark: localStorage.getItem('voetbal_dark'),
+      tournaments: localStorage.getItem('voetbal_tournaments') } };
   const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -1222,6 +1247,7 @@ async function doRestore(mode) {
     setOrDel('voetbal_teams', s.teams); setOrDel('voetbal_teams_v2', s.teamsV2); setOrDel('voetbal_last_team', s.lastTeam);
     setOrDel('voetbal_rosters', s.rosters); setOrDel('voetbal_countdown', s.countdown);
     setOrDel('voetbal_theme', s.theme); setOrDel('voetbal_dark', s.dark);
+    setOrDel('voetbal_tournaments', s.tournaments);
   } else {
     // Samenvoegen: enkel wedstrijden toevoegen die nog niet bestaan (op id).
     const existing = await dbAll();
@@ -1234,6 +1260,12 @@ async function doRestore(mode) {
       const cur = getTeamsV2(); const keys = new Set(cur.map(t => norm(t.name)));
       inc.forEach(t => { if (!keys.has(norm(t.name))) { cur.push(t); keys.add(norm(t.name)); } });
       saveTeamsV2(cur);
+    }
+    if (data.settings && data.settings.tournaments) {
+      let incT = []; try { incT = JSON.parse(data.settings.tournaments) || []; } catch(e) {}
+      const curT = getTournaments(); const tIds = new Set(curT.map(t => t.id));
+      incT.forEach(t => { if (!tIds.has(t.id)) { curT.push(t); tIds.add(t.id); } });
+      localStorage.setItem('voetbal_tournaments', JSON.stringify(curT));
     }
   }
   localStorage.setItem('voetbal_setup_done', '1');
@@ -1426,6 +1458,310 @@ function setTrainer(i, val) {
   editingTeam.trainers[i].name = val;
 }
 
+// ===================== TORNOOIEN =====================
+function renderTournamentList() {
+  const trns = getTournaments().slice().sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  const newBtn = canManage() ? `<button class="btn btn-green" style="margin-top:8px" onclick="newTournament()">🏆 + Nieuw tornooi</button>` : '';
+  return `<div class="hdr"><button class="back" onclick="go('home')">‹</button><h1>🏆 Tornooien</h1></div>
+  <div class="content">
+    ${trns.length ? trns.map(t => {
+      const team = teamById(t.teamId);
+      return `<div class="team-row" onclick="goTournament('${t.id}')">
+        <div>
+          <div class="tn">🏆 ${esc(t.name)}</div>
+          <div class="tc">${t.date ? fmtDate(new Date(t.date + 'T00:00:00').getTime()) : ''}${t.location ? ' · ' + esc(t.location) : ''}${team ? ' · ' + esc(team.name) : ''}</div>
+        </div>
+        <span style="margin-left:auto;color:var(--txt2);font-size:22px">›</span>
+      </div>`;
+    }).join('') : '<div class="empty"><div class="ei">🏆</div><p>Nog geen tornooien.<br>Tik op de knop hieronder om er een aan te maken.</p></div>'}
+    ${newBtn}
+  </div>`;
+}
+
+function renderTournament() {
+  const t = currentTournament;
+  if (!t) return '<div class="content"><p>Niet gevonden.</p></div>';
+  setTimeout(loadTournamentDetail, 0);
+  const editBtn = canManage() ? `<button class="hdr-btn" onclick="editTournament('${t.id}')">✏️</button>` : '';
+  return `<div class="hdr"><button class="back" onclick="go('tournaments')">‹</button><h1>🏆 ${esc(t.name)}</h1>${editBtn}</div>
+  <div class="content" id="trn-content"><div class="empty"><div class="ei">⏳</div><p>Laden...</p></div></div>`;
+}
+
+async function loadTournamentDetail() {
+  const t = currentTournament;
+  if (!t) return;
+  const el = document.getElementById('trn-content');
+  if (!el) return;
+  const all = await dbAll();
+  const matches = all.filter(m => m.tournamentId === t.id).sort((a, b) => (a.date || '').localeCompare(b.date || '') || (a.createdAt - b.createdAt));
+  const done = matches.filter(m => m.status === 'done');
+  const team = teamById(t.teamId);
+  const w = done.filter(m => m.scoreUs > m.scoreThem).length;
+  const d = done.filter(m => m.scoreUs === m.scoreThem).length;
+  const l = done.filter(m => m.scoreUs < m.scoreThem).length;
+  const gf = done.reduce((s, m) => s + m.scoreUs, 0);
+  const ga = done.reduce((s, m) => s + m.scoreThem, 0);
+  const infoRows = [
+    ['Ploeg', team ? team.name : (t.teamName || '')],
+    ['Locatie', t.location],
+    ['Trainer', t.trainer],
+    ['Ploegverantwoordelijke', t.responsible],
+  ].filter(([, v]) => v).map(([k, v]) => `<div class="stat-row"><span style="color:var(--txt2);min-width:140px">${k}</span><span style="font-weight:600">${esc(v)}</span></div>`).join('');
+  const squad = t.squad || { base: [], bench: [], absent: [] };
+  const squadBase = (squad.base || []).length, squadBench = (squad.bench || []).length;
+  const squadRow = `<div class="stat-row"><span style="color:var(--txt2);min-width:140px">Selectie</span><span style="font-weight:600">${squadBase} basis · ${squadBench} bank</span></div>`;
+  const statsHtml = done.length ? `<div class="card" style="margin-bottom:12px">
+    <div class="stat-big">
+      <div class="stat-box"><div class="v" style="color:var(--grn)">${w}</div><div class="l">Gewonnen</div></div>
+      <div class="stat-box"><div class="v">${d}</div><div class="l">Gelijk</div></div>
+      <div class="stat-box"><div class="v" style="color:var(--rd)">${l}</div><div class="l">Verloren</div></div>
+      <div class="stat-box"><div class="v">${gf}–${ga}</div><div class="l">Doelpunten</div></div>
+    </div>
+  </div>` : '';
+  const newMatchBtn = canManage() ? `<button class="btn btn-green" style="margin-bottom:12px" onclick="addTournamentMatch('${t.id}')">⚽ + Wedstrijd toevoegen</button>` : '';
+  const matchList = matches.length
+    ? matches.map(matchItemHtml).join('')
+    : `<div class="empty" style="padding:20px 0"><div class="ei" style="font-size:36px">⚽</div><p>Nog geen wedstrijden. Voeg er een toe!</p></div>`;
+  el.innerHTML = `
+    <div class="card">${infoRows}${squadRow}</div>
+    ${statsHtml}
+    ${newMatchBtn}
+    <div class="sec">Wedstrijden (${matches.length})</div>
+    ${matchList}
+    ${canManage() ? `<div class="danger"><button class="btn btn-red" onclick="deleteTournamentConfirm('${t.id}')">🗑 Tornooi verwijderen</button></div>` : ''}`;
+}
+
+function deleteTournamentConfirm(id) {
+  const t = tournamentById(id); if (!t) return;
+  openModal(`<h3>Tornooi verwijderen?</h3>
+    <p style="text-align:center;color:var(--txt2);margin-bottom:16px">"${esc(t.name)}" wordt verwijderd. De wedstrijden blijven bewaard maar zijn niet meer gelinkt aan dit tornooi.</p>
+    <button class="btn btn-red" onclick="doDeleteTournament('${id}')">🗑 Ja, verwijderen</button>
+    <button class="btn btn-gray" style="margin-top:8px" onclick="closeModal()">Annuleren</button>`);
+}
+function doDeleteTournament(id) {
+  saveTournaments(getTournaments().filter(t => t.id !== id));
+  currentTournament = null; closeModal(); go('tournaments');
+}
+
+// ----- Tornooi-wizard -----
+function newTournament() {
+  if (!canManage()) return;
+  const now = new Date();
+  const team = getTeamsV2()[0] || null;
+  const teamTrainers = team ? (team.trainers || []).filter(tr => tr.name) : [];
+  trnWiz = {
+    step: 1, id: uid(), isNew: true,
+    name: '', date: now.toISOString().split('T')[0],
+    location: '', teamId: (team || {}).id || '',
+    trainer: teamTrainers.length ? teamTrainers[0].name : '',
+    responsible: team ? (team.responsible || '') : '',
+    trainerIsOther: false, pool: [], poolTeamId: null,
+  };
+  go('tournamentNew');
+}
+function editTournament(id) {
+  if (!canManage()) return;
+  const t = tournamentById(id); if (!t) return;
+  trnWiz = Object.assign({}, t, { step: 1, isNew: false, pool: [], poolTeamId: null });
+  trnWizBuildPool();
+  const squad = t.squad || { base: [], bench: [], absent: [] };
+  const byKey = {};
+  [...(squad.base||[]), ...(squad.bench||[]), ...(squad.absent||[])].forEach(s => { byKey[s.srcId || s.name] = s.sel; });
+  trnWiz.pool.forEach(p => { if (byKey[p.srcId]) p.sel = byKey[p.srcId]; else if (byKey[p.name]) p.sel = byKey[p.name]; });
+  trnWiz.poolTeamId = trnWiz.teamId;
+  go('tournamentNew');
+}
+function trnWizBuildPool() {
+  const team = teamById(trnWiz.teamId);
+  trnWiz.pool = team ? team.players.map(p => ({
+    pid: uid(), srcId: p.id,
+    name: ((pFirstName(p) + ' ' + pLastName(p)).trim()) || p.name || '',
+    number: p.number || '', pos: p.pos || '', sel: 'none',
+  })) : [];
+}
+function trnWizTeamChange() {
+  captureTrnStep1();
+  const team = teamById(trnWiz.teamId);
+  if (team) {
+    const trainers = (team.trainers || []).filter(tr => tr.name);
+    trnWiz.trainer = trainers.length ? trainers[0].name : '';
+    trnWiz.responsible = team.responsible || '';
+    trnWiz.trainerIsOther = false;
+    trnWizBuildPool(); trnWiz.poolTeamId = trnWiz.teamId;
+  }
+  render();
+}
+function trnTrainerSelChange(val) {
+  trnWiz.trainerIsOther = val === '_other';
+  if (!trnWiz.trainerIsOther) trnWiz.trainer = val;
+  const fg = document.getElementById('trn-trainer-other-fg');
+  if (fg) fg.style.display = trnWiz.trainerIsOther ? '' : 'none';
+}
+function captureTrnStep1() {
+  const v = id => { const e = document.getElementById(id); return e ? e.value : ''; };
+  const ts = document.getElementById('trn-team-sel'); if (ts) trnWiz.teamId = ts.value;
+  trnWiz.name = (v('trn-name') || '').trim();
+  trnWiz.date = v('trn-date');
+  trnWiz.location = (v('trn-location') || '').trim();
+  const trainerSel = document.getElementById('trn-trainer-sel');
+  if (trainerSel) { trnWiz.trainerIsOther = trainerSel.value === '_other'; if (!trnWiz.trainerIsOther) trnWiz.trainer = trainerSel.value; }
+  const trainerOther = document.getElementById('trn-trainer-other');
+  if (trnWiz.trainerIsOther && trainerOther) trnWiz.trainer = trainerOther.value.trim();
+  trnWiz.responsible = (v('trn-responsible') || '').trim();
+}
+function trnWizNext() {
+  if (trnWiz.step === 1) {
+    captureTrnStep1();
+    if (!trnWiz.name) { alert('Geef het tornooi een naam.'); return; }
+    if (!trnWiz.teamId) { alert('Kies een ploeg.'); return; }
+    if (trnWiz.poolTeamId !== trnWiz.teamId) { trnWizBuildPool(); trnWiz.poolTeamId = trnWiz.teamId; }
+    trnWiz.step = 2; render();
+  }
+}
+function trnWizBack() { if (trnWiz.step > 1) { trnWiz.step--; render(); } }
+function trnWizLeave() { trnWiz = null; go(currentTournament ? 'tournament' : 'tournaments'); }
+function setTrnSel(pid, val) {
+  const p = trnWiz.pool.find(x => x.pid === pid); if (!p) return;
+  p.sel = (p.sel === val) ? 'none' : val;
+  render();
+}
+function setTrnPoolNum(pid, val) { const p = trnWiz.pool.find(x => x.pid === pid); if (p) p.number = val; }
+async function saveTournamentWiz() {
+  const squad = {
+    base:   trnWiz.pool.filter(p => p.sel === 'basis') .map(p => ({ pid: p.pid, srcId: p.srcId, name: p.name, number: p.number, pos: p.pos, sel: 'basis'  })),
+    bench:  trnWiz.pool.filter(p => p.sel === 'bank')  .map(p => ({ pid: p.pid, srcId: p.srcId, name: p.name, number: p.number, pos: p.pos, sel: 'bank'   })),
+    absent: trnWiz.pool.filter(p => p.sel === 'absent').map(p => ({ pid: p.pid, srcId: p.srcId, name: p.name, number: p.number, pos: p.pos, sel: 'absent' })),
+  };
+  const team = teamById(trnWiz.teamId);
+  const obj = {
+    id: trnWiz.id, name: trnWiz.name, date: trnWiz.date, location: trnWiz.location,
+    teamId: trnWiz.teamId, teamName: team ? team.name : '',
+    trainer: trnWiz.trainer || '', responsible: trnWiz.responsible || '', squad,
+  };
+  const arr = getTournaments();
+  const idx = arr.findIndex(t => t.id === obj.id);
+  if (idx >= 0) arr[idx] = obj; else arr.push(obj);
+  saveTournaments(arr);
+  currentTournament = obj; trnWiz = null;
+  go('tournament');
+}
+function renderTournamentNew() {
+  if (!trnWiz) return '<div class="content"><p>Geen wizard.</p></div>';
+  const titles = { 1: 'Info', 2: 'Selectie' };
+  const pills = [1, 2].map(n => `<div class="step-pill ${trnWiz.step===n?'on':trnWiz.step>n?'done':''}"></div>`).join('');
+  const body = trnWiz.step === 1 ? renderTrnStep1() : renderTrnStep2();
+  return `<div class="hdr"><button class="back" onclick="${trnWiz.step===1 ? 'trnWizLeave()' : 'trnWizBack()'}">‹</button><h1>${trnWiz.isNew ? 'Nieuw tornooi' : 'Tornooi bewerken'} · ${titles[trnWiz.step]}</h1></div>
+    <div class="steps">${pills}</div>
+    <div class="content">${body}</div>`;
+}
+function renderTrnStep1() {
+  const teams = getTeamsV2();
+  const teamSel = teams.length
+    ? `<select id="trn-team-sel" onchange="trnWizTeamChange()">${teams.map(t => `<option value="${t.id}" ${trnWiz.teamId===t.id?'selected':''}>${esc(t.name)}</option>`).join('')}</select>`
+    : `<div style="font-size:14px;color:var(--txt2);padding:6px 0">Nog geen ploegen. <a onclick="go('teams')" style="color:var(--grn);font-weight:700;cursor:pointer">Maak eerst een ploeg aan →</a></div>`;
+  const selectedTeam = teamById(trnWiz.teamId) || (teams.length ? teams[0] : null);
+  const teamTrainers = selectedTeam ? (selectedTeam.trainers || []).filter(tr => tr.name) : [];
+  const trainerOpts = teamTrainers.map(tr => `<option value="${esc(tr.name)}" ${!trnWiz.trainerIsOther&&trnWiz.trainer===tr.name?'selected':''}>${esc(tr.name)}</option>`).join('');
+  return `<div class="card">
+    <div class="fg"><label>Naam van het tornooi</label><input id="trn-name" type="text" placeholder="bv. Paastornooi Gent" value="${esc(trnWiz.name)}" autocomplete="off"></div>
+    <div class="fg"><label>Ploeg</label>${teamSel}</div>
+    <div class="fg"><label>Datum</label><input id="trn-date" type="date" value="${esc(trnWiz.date)}"></div>
+    <div class="fg"><label>Locatie</label><input id="trn-location" type="text" placeholder="bv. Sportpark Gent" value="${esc(trnWiz.location)}" autocomplete="off"></div>
+    <div class="fg"><label>Trainer</label>
+      <select id="trn-trainer-sel" onchange="trnTrainerSelChange(this.value)">
+        ${trainerOpts}
+        <option value="_other" ${trnWiz.trainerIsOther?'selected':''}>Andere trainer…</option>
+      </select></div>
+    <div class="fg" id="trn-trainer-other-fg" style="${trnWiz.trainerIsOther?'':'display:none'}">
+      <label>Naam trainer</label>
+      <input id="trn-trainer-other" type="text" value="${esc(trnWiz.trainer||'')}" placeholder="Naam trainer" autocomplete="off">
+    </div>
+    <div class="fg"><label>Ploegverantwoordelijke (optioneel)</label>
+      <input id="trn-responsible" type="text" value="${esc(trnWiz.responsible||'')}" placeholder="Naam (optioneel)" autocomplete="off">
+    </div>
+  </div>
+  <button class="btn btn-green" onclick="trnWizNext()">Volgende → Selectie</button>`;
+}
+function renderTrnStep2() {
+  const team = teamById(trnWiz.teamId);
+  const bc = trnWiz.pool.filter(p => p.sel === 'basis').length;
+  const bk = trnWiz.pool.filter(p => p.sel === 'bank').length;
+  const ab = trnWiz.pool.filter(p => p.sel === 'absent').length;
+  const selRow2 = p => `<div class="selrow">
+    <input type="number" class="pn-inp" value="${esc(p.number)}" placeholder="?" onchange="setTrnPoolNum('${p.pid}',this.value)" inputmode="numeric" aria-label="Rugnummer">
+    <div class="nm">${esc(p.name)}<small>${p.pos || '—'}</small></div>
+    <div class="seg">
+      <button class="${p.sel==='basis'?'basis':''}" onclick="setTrnSel('${p.pid}','basis')">Basis</button>
+      <button class="${p.sel==='bank'?'bank':''}" onclick="setTrnSel('${p.pid}','bank')">Bank</button>
+      <button class="${p.sel==='absent'?'absent':''}" onclick="setTrnSel('${p.pid}','absent')" title="Afwezig">✗</button>
+    </div></div>`;
+  return `
+    <div class="card" style="display:flex;gap:10px;text-align:center;margin-bottom:12px">
+      <div style="flex:1"><div style="font-size:22px;font-weight:900;color:var(--grn)">${bc}</div><div style="font-size:11px;color:var(--txt2)">BASIS</div></div>
+      <div style="flex:1"><div style="font-size:22px;font-weight:900">${bk}</div><div style="font-size:11px;color:var(--txt2)">BANK</div></div>
+      ${ab ? `<div style="flex:1"><div style="font-size:22px;font-weight:900;color:var(--rd)">${ab}</div><div style="font-size:11px;color:var(--txt2)">AFWEZIG</div></div>` : ''}
+    </div>
+    <div class="sec">${esc(team ? team.name : 'Ploeg')}</div>
+    <div class="card">${trnWiz.pool.length ? trnWiz.pool.map(selRow2).join('') : '<p style="color:var(--txt2);font-size:14px">Deze ploeg heeft geen spelers.</p>'}</div>
+    <div class="wiz-nav">
+      <button class="btn btn-gray" onclick="trnWizBack()">← Vorige</button>
+      <button class="btn btn-green" onclick="saveTournamentWiz()">✓ Tornooi opslaan</button>
+    </div>`;
+}
+
+// ----- Tornooimatch wizard -----
+function addTournamentMatch(trnId) {
+  if (!canManage()) return;
+  const t = tournamentById(trnId); if (!t) return;
+  const team = teamById(t.teamId);
+  const squad = t.squad || { base: [], bench: [], absent: [] };
+  const pool = [
+    ...(squad.base   || []).map(s => ({ pid: uid(), srcId: s.srcId, name: s.name, number: s.number, pos: s.pos, fromName: team ? team.name : '', guest: false, sel: 'basis',  slot: null })),
+    ...(squad.bench  || []).map(s => ({ pid: uid(), srcId: s.srcId, name: s.name, number: s.number, pos: s.pos, fromName: team ? team.name : '', guest: false, sel: 'bank',   slot: null })),
+    ...(squad.absent || []).map(s => ({ pid: uid(), srcId: s.srcId, name: s.name, number: s.number, pos: s.pos, fromName: team ? team.name : '', guest: false, sel: 'absent', slot: null })),
+  ];
+  const now = new Date();
+  wiz = {
+    step: 1, trnMode: true, tournamentId: trnId,
+    teamId: t.teamId, teamNameFallback: team ? team.name : '',
+    opponent: '', date: t.date || now.toISOString().split('T')[0],
+    time: `${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}`,
+    location: t.location || 'Thuis', matchType: '8v8',
+    periodKey: 'delen', quarterDuration: 20, numQuarters: 1,
+    competition: 'Tornooi', matchday: '', referee: '', jersey: '', weather: '',
+    trainer: t.trainer || '', responsible: t.responsible || '', trainerIsOther: false,
+    pool, poolTeamId: t.teamId, formationIndex: 0, selPlace: null,
+  };
+  go('new');
+}
+function renderTrnMatchStep1() {
+  return `<div class="card">
+    <div class="fg"><label>Tegenstander</label><input id="n-opp" type="text" placeholder="Naam tegenstander..." autocomplete="off" value="${esc(wiz.opponent)}"></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div class="fg"><label>Datum</label><input id="n-date" type="date" value="${wiz.date}"></div>
+      <div class="fg"><label>Startuur</label><input id="n-time" type="time" value="${wiz.time}"></div>
+    </div>
+    <div class="fg"><label>Wedstrijdtype</label>
+      <select id="n-type" onchange="trnWizTypeChange()">
+        ${['3v3','5v5','8v8','11v11'].map(tp => `<option value="${tp}" ${wiz.matchType===tp?'selected':''}>${tp.replace('v',' tegen ')}</option>`).join('')}
+      </select></div>
+  </div>
+  <button class="btn btn-green" onclick="trnMatchNext()">Volgende → Selectie</button>`;
+}
+function trnWizTypeChange() {
+  wiz.matchType = document.getElementById('n-type').value;
+  wiz.formationIndex = 0;
+  wiz.pool.forEach(p => p.slot = null);
+}
+function trnMatchNext() {
+  wiz.opponent = (document.getElementById('n-opp')?.value || '').trim();
+  wiz.date = document.getElementById('n-date')?.value || wiz.date;
+  wiz.time = document.getElementById('n-time')?.value || wiz.time;
+  wiz.matchType = document.getElementById('n-type')?.value || wiz.matchType;
+  if (!wiz.opponent) { alert('Vul de naam van de tegenstander in.'); return; }
+  wiz.step = 2; render();
+}
+
 // ===================== NIEUWE WEDSTRIJD (WIZARD) =====================
 let wiz = null;
 function startWizard() {
@@ -1478,6 +1814,16 @@ function wizSetLoc(loc, btn) { wiz.location = loc; document.querySelectorAll('#n
 
 function renderNew() {
   if (!wiz) startWizard();
+  if (wiz.trnMode) {
+    const t = tournamentById(wiz.tournamentId);
+    const trnTitles = { 1: 'Tegenstander', 2: 'Selectie', 3: 'Opstelling' };
+    const pills = [1, 2, 3].map(n => `<div class="step-pill ${wiz.step===n?'on':wiz.step>n?'done':''}"></div>`).join('');
+    const body = wiz.step === 1 ? renderTrnMatchStep1() : wiz.step === 2 ? wizStep2() : wizStep3();
+    const backAction = wiz.step === 1 ? `wiz=null;go('tournament')` : `wizBack()`;
+    return `<div class="hdr"><button class="back" onclick="${backAction}">‹</button><h1>Tornooimatch${t?' · '+esc(t.name):''} · ${trnTitles[wiz.step]}</h1></div>
+      <div class="steps">${pills}</div>
+      <div class="content">${body}</div>`;
+  }
   const titles = { 1: 'Wedstrijd', 2: 'Selectie', 3: 'Opstelling' };
   const pills = [1, 2, 3].map(n => `<div class="step-pill ${wiz.step===n?'on':wiz.step>n?'done':''}"></div>`).join('');
   const body = wiz.step === 1 ? wizStep1() : wiz.step === 2 ? wizStep2() : wizStep3();
@@ -1713,7 +2059,7 @@ async function finishWizard(startNow) {
     trainer: wiz.trainer || '', responsible: wiz.responsible || '',
     opponent: wiz.opponent, date: wiz.date, time: wiz.time, location: wiz.location,
     matchType: wiz.matchType, fieldSize: MATCH_TYPES[wiz.matchType].field,
-    periodKey: wiz.periodKey, numQuarters: PERIOD_TYPES[wiz.periodKey].count, quarterDuration: wiz.quarterDuration,
+    periodKey: wiz.periodKey, numQuarters: wiz.numQuarters !== undefined ? wiz.numQuarters : PERIOD_TYPES[wiz.periodKey].count, quarterDuration: wiz.quarterDuration,
     players: starters.concat(bench),
     absentPlayers: wiz.pool.filter(p => p.sel === 'absent').map(p => p.name),
   };
@@ -1727,7 +2073,9 @@ async function finishWizard(startNow) {
     m = Object.assign({ id: uid(), createdAt: Date.now(), notes: '', motmId: null, captainId: null, quarters: [], currentQuarter: 0, quarterStatus: 'not_started', scoreUs: 0, scoreThem: 0, events: [] }, common);
     m.status = startNow ? 'live' : 'planned';
   }
+  if (wiz.tournamentId) m.tournamentId = wiz.tournamentId;
   wiz = null; await dbSave(m); match = m;
+  if (m.tournamentId) currentTournament = tournamentById(m.tournamentId);
   await go(startNow ? 'live' : 'prep', m.id);
 }
 // Een geplande wedstrijd opnieuw in de wizard openen om te bewerken.
@@ -1756,8 +2104,9 @@ function renderPrep() {
   const ro = !!(m.fromCloud && !isAdmin); // kijker: alleen-lezen
   const starters = m.players.filter(p => p.starting), bench = m.players.filter(p => !p.starting);
   const info = [['Formatie', m.formation], ['Trainer', m.trainer], ['Ploegverantwoordelijke', m.responsible], ['Soort', m.competition], ['Speeldag', m.matchday], ['Scheidsrechter', m.referee], ['Truitkleur', m.jersey], ['Weer / veld', m.weather]].filter(([k, v]) => v);
+  const prepBack = m.tournamentId ? `goTournament('${m.tournamentId}')` : `go('home')`;
   return `
-  <div class="hdr"><button class="back" onclick="go('home')">‹</button>
+  <div class="hdr"><button class="back" onclick="${prepBack}">‹</button>
     <div><h1>${esc(tName(m))} vs ${esc(m.opponent)}</h1><div class="hdr-sub">🗓 Gepland · ${m.location} · ${matchWhen(m)} · ${m.matchType}</div></div>
   </div>
   <div class="content">
@@ -1968,12 +2317,13 @@ function playerRowHtml(p, minsData, isOff=false, totalMs=0) {
 }
 function setTab(t) { tab = t; render(); if (t==='wedstrijd') startTimer(); else stopTimer(); }
 function confirmLeave() {
+  const backFn = (match && match.tournamentId) ? `goTournament('${match && match.tournamentId}')` : `go('home')`;
   if (match && match.status === 'live') {
     openModal(`<h3>Wedstrijd verlaten?</h3>
       <p style="text-align:center;color:var(--txt2);margin-bottom:16px">De wedstrijd loopt nog. Je kan later terugkomen.</p>
-      <button class="btn btn-pale" onclick="closeModal();go('home')">✓ Terug naar overzicht</button>
+      <button class="btn btn-pale" onclick="closeModal();${backFn}">✓ Terug naar overzicht</button>
       <button class="btn btn-gray" style="margin-top:8px" onclick="closeModal()">Annuleren</button>`);
-  } else go('home');
+  } else { if (match && match.tournamentId) goTournament(match.tournamentId); else go('home'); }
 }
 
 // ===================== QUARTER CONTROLS =====================
@@ -2489,8 +2839,9 @@ function renderDetail() {
     </div>`;
   }).join('');
 
+  const detailBack = match.tournamentId ? `goTournament('${match.tournamentId}')` : `go('home')`;
   return `
-  <div class="hdr"><button class="back" onclick="go('home')">‹</button>
+  <div class="hdr"><button class="back" onclick="${detailBack}">‹</button>
     <div><h1>${esc(tName(match))} vs ${esc(match.opponent)}</h1><div class="hdr-sub">${match.location} · ${matchWhen(match)} · ${match.matchType}</div></div>
   </div>
   <div class="content">
@@ -2664,6 +3015,9 @@ async function init() {
 }
 views.teams = renderTeamsList;
 views.teamEdit = renderTeamEdit;
+views.tournaments = renderTournamentList;
+views.tournament = renderTournament;
+views.tournamentNew = renderTournamentNew;
 views.prep = renderPrep;
 views.new = renderNew;
 function newMatch() { if (!canManage()) return; startWizard(); go('new'); }
