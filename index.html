@@ -1697,7 +1697,8 @@ function renderTrnStep1() {
       <input id="trn-responsible" type="text" value="${esc(trnWiz.responsible||'')}" placeholder="Naam (optioneel)" autocomplete="off">
     </div>
   </div>
-  <button class="btn btn-green" onclick="trnWizNext()">Volgende → Selectie</button>`;
+  <button class="btn btn-green" onclick="trnWizNext()">Volgende → Selectie</button>
+  <button class="btn btn-orgpale" onclick="saveTournamentWizStep1Only()" style="margin-top:8px">🗓 Opslaan zonder selectie</button>`;
 }
 function renderTrnStep2() {
   const team = teamById(trnWiz.teamId);
@@ -1763,7 +1764,8 @@ function renderTrnMatchStep1() {
         ${['3v3','5v5','8v8','11v11'].map(tp => `<option value="${tp}" ${wiz.matchType===tp?'selected':''}>${tp.replace('v',' tegen ')}</option>`).join('')}
       </select></div>
   </div>
-  <button class="btn btn-green" onclick="trnMatchNext()">Volgende → Selectie</button>`;
+  <button class="btn btn-green" onclick="trnMatchNext()">Volgende → Selectie</button>
+  <button class="btn btn-orgpale" onclick="finishStep1Only()" style="margin-top:8px">🗓 Plannen zonder opstelling</button>`;
 }
 function trnWizTypeChange() {
   wiz.matchType = document.getElementById('n-type').value;
@@ -1903,7 +1905,8 @@ function wizStep1() {
         </div>
       </details>
     </div>
-    <button class="btn btn-green" onclick="wizNext()">Volgende → Selectie</button>`;
+    <button class="btn btn-green" onclick="wizNext()">Volgende → Selectie</button>
+    <button class="btn btn-orgpale" onclick="finishStep1Only()" style="margin-top:8px">🗓 Plannen zonder selectie</button>`;
 }
 function captureStep1() {
   const v = id => { const e = document.getElementById(id); return e ? e.value : ''; };
@@ -2127,10 +2130,10 @@ function renderPrep() {
     <div><h1>${esc(tName(m))} vs ${esc(m.opponent)}</h1><div class="hdr-sub">🗓 Gepland · ${m.location} · ${matchWhen(m)} · ${m.matchType}</div></div>
   </div>
   <div class="content">
-    ${ro ? '<div class="viewer-banner">👁 Je kijkt mee — deze wedstrijd is gepland</div>' : `<button class="btn btn-green" onclick="startPlanned()">▶ Wedstrijd starten</button>
+    ${ro ? '<div class="viewer-banner">👁 Je kijkt mee — deze wedstrijd is gepland</div>' : `${(!m.players || !m.players.length) ? '<div class="viewer-banner" style="background:var(--org-pale,#fff3e0);color:#b45309;border-color:#fbbf24">⚠ Selectie nog niet ingegeven — vul de spelers in voor je de wedstrijd start.</div>' : ''}<button class="btn btn-green" onclick="startPlanned()">▶ Wedstrijd starten</button>
     <div class="wiz-nav" style="margin-top:8px">
       <button class="btn btn-pale" onclick="editMatchWizard(match)">✏️ Bewerken</button>
-      <button class="btn btn-orgpale" onclick="modalEditPlayers()">👤 Spelers</button>
+      <button class="btn btn-orgpale" onclick="modalEditPlayers()">👤 Selectie &amp; opstelling</button>
     </div>
     <button class="btn btn-gray" style="margin-top:8px" onclick="modalQuickResult()">⚡ Snel resultaat invoeren</button>`}
     <div class="sec">Info</div>
@@ -2142,7 +2145,52 @@ function renderPrep() {
     ${ro ? '' : `<div class="danger"><button class="btn btn-red" onclick="confirmDelete()">🗑 Wedstrijd verwijderen</button></div>`}
   </div>`;
 }
-async function startPlanned() { match.status = 'live'; await dbSave(match); await go('live', match.id); }
+async function finishStep1Only() {
+  if (wiz.trnMode) {
+    wiz.opponent = (document.getElementById('n-opp')?.value || '').trim();
+    wiz.date = document.getElementById('n-date')?.value || wiz.date;
+    wiz.time = document.getElementById('n-time')?.value || wiz.time;
+    wiz.matchType = document.getElementById('n-type')?.value || wiz.matchType;
+    if (!wiz.opponent) { alert('Vul de naam van de tegenstander in.'); return; }
+  } else {
+    captureStep1();
+    if (!wiz.teamId) { alert('Kies of maak eerst een ploeg aan.'); return; }
+    if (!wiz.opponent) { alert('Vul de tegenstander in.'); return; }
+  }
+  const team = teamById(wiz.teamId);
+  const m = {
+    id: wiz.editId || uid(), createdAt: Date.now(), notes: '', motmId: null, captainId: null,
+    quarters: [], currentQuarter: 0, quarterStatus: 'not_started', scoreUs: 0, scoreThem: 0, events: [],
+    teamName: team ? team.name : (wiz.teamNameFallback || 'Ploeg'), formation: '',
+    competition: wiz.competition, matchday: wiz.matchday || '', referee: wiz.referee || '',
+    jersey: wiz.jersey || '', weather: wiz.weather || '',
+    trainer: wiz.trainer || '', responsible: wiz.responsible || '',
+    opponent: wiz.opponent, date: wiz.date, time: wiz.time, location: wiz.location,
+    matchType: wiz.matchType, fieldSize: MATCH_TYPES[wiz.matchType].field,
+    periodKey: wiz.periodKey,
+    numQuarters: wiz.numQuarters !== undefined ? wiz.numQuarters : PERIOD_TYPES[wiz.periodKey].count,
+    quarterDuration: wiz.quarterDuration,
+    players: [], absentPlayers: [], status: 'planned',
+  };
+  if (wiz.tournamentId) m.tournamentId = wiz.tournamentId;
+  if (m.tournamentId) currentTournament = tournamentById(m.tournamentId);
+  wiz = null; await dbSave(m); match = m;
+  await go('prep', m.id);
+}
+function saveTournamentWizStep1Only() {
+  captureTrnStep1();
+  if (!trnWiz.name) { alert('Geef het tornooi een naam.'); return; }
+  if (!trnWiz.teamId) { alert('Kies een ploeg.'); return; }
+  trnWiz.pool = [];
+  saveTournamentWiz();
+}
+async function startPlanned() {
+  if (!match.players || !match.players.length) {
+    alert('Vul eerst de selectie en opstelling in voor je de wedstrijd start. Gebruik de knop "Selectie & opstelling invullen".');
+    return;
+  }
+  match.status = 'live'; await dbSave(match); await go('live', match.id);
+}
 // ----- Snel resultaat invoeren (wedstrijd die al gespeeld is, zonder live opvolging) -----
 let qrScorers = {};
 function modalQuickResult() {
