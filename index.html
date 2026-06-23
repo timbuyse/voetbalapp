@@ -1060,7 +1060,7 @@ async function loadStats() {
   const seasons = [...new Set(all.map(seasonOf))].sort().reverse();
   if (statsFilter !== 'all' && !teams.includes(statsFilter)) statsFilter = 'all';
   if (seasonFilter !== 'all' && !seasons.includes(seasonFilter)) seasonFilter = 'all';
-  const list = all.filter(m => (statsFilter === 'all' || m.teamName === statsFilter) && (seasonFilter === 'all' || seasonOf(m) === seasonFilter));
+  const list = all.filter(m => m.status === 'done' && (statsFilter === 'all' || m.teamName === statsFilter) && (seasonFilter === 'all' || seasonOf(m) === seasonFilter));
   const filterBar = `${teams.length ? `<div class="filterbar"><select onchange="setStatsFilter(this.value)">
       <option value="all" ${statsFilter==='all'?'selected':''}>Alle ploegen</option>
       ${teams.map(t => `<option value="${esc(t)}" ${statsFilter===t?'selected':''}>${esc(t)}</option>`).join('')}
