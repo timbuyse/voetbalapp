@@ -1006,7 +1006,24 @@ async function loadHome() {
   upcoming = upcoming.slice(0, 1); // enkel de eerstvolgende
   const upcomingHtml = upcoming.length
     ? upcoming.map(matchItemHtml).join('')
-    : `<div class="empty" style="padding:24px 16px"><div class="ei">📅</div><p>Geen geplande wedstrijd${homeFilter!=='all'?' voor deze ploeg':''}.</p></div>`;
+    : `<div class="empty" style="padding:24px 16px"><div class="ei">📅</div><p>Geen geplande wedstrijden${homeFilter!=='all'?' voor deze ploeg':''}.</p></div>`;
+  // Eerstvolgende tornooi
+  let upcomingTrn = getTournaments().filter(t => (t.date || '') >= new Date().toISOString().split('T')[0]);
+  if (homeFilter !== 'all') upcomingTrn = upcomingTrn.filter(t => { const team = teamById(t.teamId); return team && team.name === homeFilter; });
+  upcomingTrn.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+  upcomingTrn = upcomingTrn.slice(0, 1);
+  const upcomingTrnHtml = upcomingTrn.length
+    ? upcomingTrn.map(t => {
+        const team = teamById(t.teamId);
+        return `<div class="match-item" onclick="goTournament('${t.id}')" style="border-left-color:var(--org)">
+          <div class="mi-info">
+            <div class="mi-opp">🏆 ${esc(t.name)}</div>
+            <div class="mi-date">${team ? '<b>'+esc(team.name)+'</b> · ' : ''}${t.date ? fmtDate(new Date(t.date+'T00:00:00').getTime()) : ''}${t.location ? ' · '+esc(t.location) : ''}</div>
+            <span class="badge badge-plan">🗓 Gepland</span><span class="badge badge-type">Tornooi</span>
+          </div>
+        </div>`;
+      }).join('')
+    : `<div class="empty" style="padding:24px 16px"><div class="ei">🏆</div><p>Geen geplande tornooien${homeFilter!=='all'?' voor deze ploeg':''}.</p></div>`;
   // Laatst gespeelde wedstrijd (zelfde filter).
   let recent = all.filter(m => m.status === 'done');
   if (homeFilter !== 'all') recent = recent.filter(m => m.teamName === homeFilter);
@@ -1016,7 +1033,7 @@ async function loadHome() {
   const lastB = localStorage.getItem('voetbal_last_backup');
   const ageDays = lastB ? (Date.now() - +lastB) / 864e5 : Infinity;
   const backupBanner = (canManage() && all.length && ageDays > 14) ? `<div class="backup-banner"><span>💾 ${lastB ? 'Je laatste back-up is meer dan 2 weken oud.' : 'Maak een back-up zodat je niets verliest.'}</span><button class="btn btn-org btn-sm" onclick="go('settings')">Back-up</button></div>` : '';
-  el.innerHTML = tiles + newBtn + backupBanner + `<div class="sec">📅 Eerstvolgende wedstrijd</div>` + filterBar + upcomingHtml + recentHtml;
+  el.innerHTML = tiles + newBtn + backupBanner + `<div class="sec">📅 Eerstvolgende wedstrijd</div>` + filterBar + upcomingHtml + `<div class="sec">🏆 Eerstvolgende tornooi</div>` + upcomingTrnHtml + recentHtml;
 }
 // WEDSTRIJDEN = volledige lijst met filter + zoeken.
 async function loadMatches() {
